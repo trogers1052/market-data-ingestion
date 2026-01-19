@@ -14,9 +14,12 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/config"
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/ingestion"
+	"github.com/trogers1052/market-data-ingestion/internal/kafka"
 	"github.com/trogers1052/market-data-ingestion/internal/polygon"
 	"github.com/trogers1052/market-data-ingestion/internal/quality"
+	redisclient "github.com/trogers1052/market-data-ingestion/internal/redis"
 	"github.com/trogers1052/market-data-ingestion/internal/symbols"
+	"github.com/trogers1052/market-data-ingestion/internal/watchlist"
 )
 
 func main() {
@@ -228,6 +231,43 @@ func main() {
 
 	scheduler.LogStatus()
 
+	// Initialize watchlist sync if enabled
+	var watchlistSyncService *watchlist.SyncService
+	if cfg.WatchlistSyncEnabled {
+		log.Println("Watchlist sync enabled, connecting to Redis...")
+
+		// Connect to Redis
+		redisClient, err := redisclient.NewClient(cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
+		if err != nil {
+			log.Printf("Warning: Failed to connect to Redis: %v", err)
+			log.Println("Continuing without watchlist sync...")
+		} else {
+			defer redisClient.Close()
+
+			// Create watchlist sync service
+			watchlistSyncService = watchlist.NewSyncService(repo, redisClient, polygonClient)
+
+			// Create Kafka consumer
+			consumer, err := kafka.NewWatchlistConsumer(
+				cfg.KafkaBrokers,
+				cfg.KafkaWatchlistTopic,
+				cfg.KafkaConsumerGroup,
+				watchlistSyncService,
+			)
+			if err != nil {
+				log.Printf("Warning: Failed to create Kafka consumer: %v", err)
+			} else {
+				watchlistSyncService.SetConsumer(consumer)
+				log.Printf("Kafka watchlist consumer ready for topic: %s", cfg.KafkaWatchlistTopic)
+			}
+
+			// Sync initial watchlist from Redis
+			if _, err := watchlistSyncService.SyncFromRedis(ctx); err != nil {
+				log.Printf("Warning: Failed to sync initial watchlist from Redis: %v", err)
+			}
+		}
+	}
+
 	// Create backfill service
 	backfillService := ingestion.NewBackfillService(polygonClient, repo, cfg.BackfillMonths)
 
@@ -274,6 +314,25 @@ func main() {
 		}
 	}()
 
+	// Start watchlist consumer if available
+	if watchlistSyncService != nil {
+		go func() {
+			if err := watchlistSyncService.StartConsumer(ctx); err != nil {
+				log.Printf("Watchlist consumer error: %v", err)
+			}
+		}()
+
+		// Process backfill requests for newly added symbols
+		go func() {
+			for symbol := range watchlistSyncService.BackfillChannel() {
+				log.Printf("Processing backfill for new symbol: %s", symbol)
+				if err := backfillService.BackfillSymbols(ctx, []string{symbol}); err != nil {
+					log.Printf("Backfill error for %s: %v", symbol, err)
+				}
+			}
+		}()
+	}
+
 	// Start real-time ingestion in background
 	errCh := make(chan error, 1)
 	go func() {
@@ -299,6 +358,10 @@ func main() {
 	cancel()
 
 	realtimeService.Stop()
+
+	if watchlistSyncService != nil {
+		watchlistSyncService.Close()
+	}
 
 	log.Println("Service stopped")
 }

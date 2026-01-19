@@ -25,6 +25,17 @@ type Config struct {
 	KafkaOHLCVTopic string
 	KafkaEnabled    bool
 
+	// Kafka watchlist consumer
+	KafkaWatchlistTopic   string
+	KafkaConsumerGroup    string
+	WatchlistSyncEnabled  bool
+
+	// Redis (for reading shared watchlist)
+	RedisHost     string
+	RedisPort     int
+	RedisPassword string
+	RedisDB       int
+
 	// Ingestion settings
 	PollIntervalSeconds int
 	BackfillMonths      int
@@ -52,6 +63,17 @@ func Load() (*Config, error) {
 		KafkaBrokers:    strings.Split(getEnv("KAFKA_BROKERS", "localhost:19092"), ","),
 		KafkaOHLCVTopic: getEnv("KAFKA_OHLCV_TOPIC", "market.ohlcv.1min"),
 		KafkaEnabled:    getEnvBool("KAFKA_ENABLED", false),
+
+		// Kafka watchlist consumer
+		KafkaWatchlistTopic:  getEnv("KAFKA_WATCHLIST_TOPIC", "trading.watchlist"),
+		KafkaConsumerGroup:   getEnv("KAFKA_CONSUMER_GROUP", "market-data-ingestion"),
+		WatchlistSyncEnabled: getEnvBool("WATCHLIST_SYNC_ENABLED", true),
+
+		// Redis
+		RedisHost:     getEnv("REDIS_HOST", "localhost"),
+		RedisPort:     getEnvInt("REDIS_PORT", 6379),
+		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisDB:       getEnvInt("REDIS_DB", 0),
 
 		// Ingestion
 		PollIntervalSeconds: getEnvInt("POLL_INTERVAL_SECONDS", 60),
@@ -84,6 +106,11 @@ func (c *Config) DatabaseURL() string {
 		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
 		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName, c.DBSSLMode,
 	)
+}
+
+// RedisAddr returns the Redis address in host:port format
+func (c *Config) RedisAddr() string {
+	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
 }
 
 func getEnv(key, defaultValue string) string {
