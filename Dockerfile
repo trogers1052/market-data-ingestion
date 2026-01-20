@@ -27,6 +27,9 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 COPY --from=builder /market-data-ingestion /market-data-ingestion
 
+# Copy migrations directory
+COPY --from=builder /app/db/migrations /db/migrations
+
 USER nonroot:nonroot
 
 ENV TZ=America/New_York

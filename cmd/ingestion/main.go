@@ -376,9 +376,9 @@ func main() {
 
 func runMigrations(databaseUrl string) error {
 	// The "file://" prefix tells the migrate library to use the file driver
-	// Specify the path to your migrations directory
+	// Use absolute path for Docker container compatibility
 	m, err := migrate.New(
-		"file://./db/migrations", // Path to your migrations directory
+		"file:///db/migrations", // Absolute path to migrations directory in container
 		databaseUrl)
 	if err != nil {
 		log.Fatalf("could not create migrate instance: %v", err)
