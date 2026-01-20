@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/trogers1052/market-data-ingestion/internal/database"
+	"github.com/trogers1052/market-data-ingestion/internal/kafka"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 	"github.com/trogers1052/market-data-ingestion/internal/polygon"
 )
@@ -16,6 +17,7 @@ type RealtimeService struct {
 	polygonClient *polygon.Client
 	repo          *database.Repository
 	scheduler     *MarketScheduler
+	kafkaProducer *kafka.Producer
 
 	// Buffer for batching inserts
 	barBuffer   []models.OHLCV
@@ -33,11 +35,13 @@ func NewRealtimeService(
 	polygonClient *polygon.Client,
 	repo *database.Repository,
 	scheduler *MarketScheduler,
+	kafkaProducer *kafka.Producer,
 ) *RealtimeService {
 	return &RealtimeService{
 		polygonClient: polygonClient,
 		repo:          repo,
 		scheduler:     scheduler,
+		kafkaProducer: kafkaProducer,
 		barBuffer:     make([]models.OHLCV, 0, 100),
 	}
 }
@@ -155,7 +159,7 @@ func (s *RealtimeService) flushLoop(ctx context.Context) {
 	}
 }
 
-// flushBuffer writes buffered bars to the database
+// flushBuffer writes buffered bars to the database and publishes to Kafka
 func (s *RealtimeService) flushBuffer(ctx context.Context) {
 	s.bufferMu.Lock()
 	if len(s.barBuffer) == 0 {
@@ -169,7 +173,7 @@ func (s *RealtimeService) flushBuffer(ctx context.Context) {
 	s.barBuffer = s.barBuffer[:0]
 	s.bufferMu.Unlock()
 
-	// Insert bars
+	// Insert bars to database
 	if err := s.repo.InsertOHLCVBatch(ctx, bars); err != nil {
 		log.Printf("Error flushing bars to database: %v", err)
 		// Put bars back in buffer for retry
@@ -177,6 +181,14 @@ func (s *RealtimeService) flushBuffer(ctx context.Context) {
 		s.barBuffer = append(bars, s.barBuffer...)
 		s.bufferMu.Unlock()
 		return
+	}
+
+	// Publish to Kafka (non-blocking, log errors but don't fail)
+	if s.kafkaProducer != nil {
+		if err := s.kafkaProducer.PublishQuotesBatch(ctx, bars); err != nil {
+			log.Printf("Warning: failed to publish bars to Kafka: %v", err)
+			// Don't fail the whole operation if Kafka fails
+		}
 	}
 
 	s.statsMu.Lock()

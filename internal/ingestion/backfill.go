@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/trogers1052/market-data-ingestion/internal/database"
+	"github.com/trogers1052/market-data-ingestion/internal/kafka"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 	"github.com/trogers1052/market-data-ingestion/internal/polygon"
 )
@@ -16,14 +17,16 @@ type BackfillService struct {
 	polygonClient *polygon.Client
 	repo          *database.Repository
 	months        int
+	kafkaProducer *kafka.Producer
 }
 
 // NewBackfillService creates a new backfill service
-func NewBackfillService(polygonClient *polygon.Client, repo *database.Repository, months int) *BackfillService {
+func NewBackfillService(polygonClient *polygon.Client, repo *database.Repository, months int, kafkaProducer *kafka.Producer) *BackfillService {
 	return &BackfillService{
 		polygonClient: polygonClient,
 		repo:          repo,
 		months:        months,
+		kafkaProducer: kafkaProducer,
 	}
 }
 
@@ -31,26 +34,85 @@ func NewBackfillService(polygonClient *polygon.Client, repo *database.Repository
 func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) error {
 	log.Printf("Starting backfill for %s (%d months)", symbol, s.months)
 
-	// Update status to in_progress
-	if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusInProgress, nil, nil, ""); err != nil {
-		log.Printf("Warning: failed to update backfill status: %v", err)
+	// Check existing data range
+	minTime, maxTime, err := s.repo.GetDataRange(ctx, symbol)
+	if err != nil {
+		log.Printf("Warning: failed to get existing data range: %v", err)
 	}
 
-	// Calculate date range
+	// Calculate target date range
 	endDate := time.Now()
 	startDate := endDate.AddDate(0, -s.months, 0)
+
+	// Determine what data we actually need to fetch
+	var fetchStart, fetchEnd time.Time
+	needsBackfill := false
+
+	if minTime == nil || maxTime == nil {
+		// No existing data, fetch everything
+		fetchStart = startDate
+		fetchEnd = endDate
+		needsBackfill = true
+		log.Printf("  No existing data found, will fetch from %s to %s",
+			fetchStart.Format("2006-01-02"), fetchEnd.Format("2006-01-02"))
+	} else {
+		// Check if we need to extend backwards
+		if minTime.After(startDate) {
+			fetchStart = startDate
+			fetchEnd = *minTime
+			needsBackfill = true
+			log.Printf("  Extending backwards: %s to %s",
+				fetchStart.Format("2006-01-02"), fetchEnd.Format("2006-01-02"))
+		}
+
+		// Check if we need to extend forwards (catch up to now)
+		// Only fetch if we're more than 1 day behind
+		oneDayAgo := endDate.AddDate(0, 0, -1)
+		if maxTime.Before(oneDayAgo) {
+			if needsBackfill {
+				// We already have a range, extend it
+				fetchEnd = endDate
+			} else {
+				// Only need to extend forwards
+				fetchStart = *maxTime
+				fetchEnd = endDate
+				needsBackfill = true
+			}
+			log.Printf("  Extending forwards: %s to %s",
+				fetchStart.Format("2006-01-02"), fetchEnd.Format("2006-01-02"))
+		}
+
+		if !needsBackfill {
+			log.Printf("  Data already up to date (range: %s to %s), skipping backfill",
+				minTime.Format("2006-01-02"), maxTime.Format("2006-01-02"))
+			// Update status to completed even though we didn't fetch
+			if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusCompleted, minTime, maxTime, ""); err != nil {
+				log.Printf("Warning: failed to update backfill status: %v", err)
+			}
+			return nil
+		}
+	}
+
+	if !needsBackfill {
+		return nil
+	}
+
+	// Update status to in_progress
+	if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusInProgress, &fetchStart, &fetchEnd, ""); err != nil {
+		log.Printf("Warning: failed to update backfill status: %v", err)
+	}
 
 	// Polygon API returns max 50,000 results per request
 	// For 1-minute data, that's about 128 trading days (50000 / 390 bars per day)
 	// So we need to chunk by month to be safe
 	var totalBars int
-	currentStart := startDate
+	currentStart := fetchStart
 
-	for currentStart.Before(endDate) {
+	for currentStart.Before(fetchEnd) {
 		// Chunk by 2 weeks to stay well under limit
 		currentEnd := currentStart.AddDate(0, 0, 14)
-		if currentEnd.After(endDate) {
-			currentEnd = endDate
+		if currentEnd.After(fetchEnd) {
+			currentEnd = fetchEnd
 		}
 
 		log.Printf("  Fetching %s: %s to %s",
@@ -75,6 +137,14 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 				return fmt.Errorf("failed to insert bars for %s: %w", symbol, err)
 			}
 
+			// Publish to Kafka (non-blocking, log errors but don't fail)
+			if s.kafkaProducer != nil {
+				if err := s.kafkaProducer.PublishQuotesBatch(ctx, bars); err != nil {
+					log.Printf("  Warning: failed to publish bars to Kafka: %v", err)
+					// Don't fail the whole operation if Kafka fails
+				}
+			}
+
 			totalBars += len(bars)
 			log.Printf("  Inserted %d bars (total: %d)", len(bars), totalBars)
 		}
@@ -92,7 +162,7 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 	}
 
 	// Update backfill status to completed
-	if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusCompleted, &startDate, &endDate, ""); err != nil {
+	if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusCompleted, &fetchStart, &fetchEnd, ""); err != nil {
 		log.Printf("Warning: failed to update backfill status: %v", err)
 	}
 

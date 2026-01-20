@@ -276,8 +276,22 @@ func main() {
 		}
 	}
 
+	// Create Kafka producer for quote events
+	var kafkaProducer *kafka.Producer
+	if cfg.KafkaEnabled {
+		producer, err := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaQuotesTopic, true)
+		if err != nil {
+			log.Printf("Warning: Failed to create Kafka producer: %v", err)
+			log.Println("Continuing without Kafka publishing...")
+		} else {
+			kafkaProducer = producer
+			defer kafkaProducer.Close()
+			log.Printf("Kafka producer ready for topic: %s", cfg.KafkaQuotesTopic)
+		}
+	}
+
 	// Create backfill service
-	backfillService := ingestion.NewBackfillService(polygonClient, repo, cfg.BackfillMonths)
+	backfillService := ingestion.NewBackfillService(polygonClient, repo, cfg.BackfillMonths, kafkaProducer)
 
 	// Handle backfill-only mode
 	if *backfillOnly {
@@ -308,7 +322,7 @@ func main() {
 	}
 
 	// Create real-time ingestion service
-	realtimeService := ingestion.NewRealtimeService(polygonClient, repo, scheduler)
+	realtimeService := ingestion.NewRealtimeService(polygonClient, repo, scheduler, kafkaProducer)
 
 	// Set up signal handling for graceful shutdown
 	quit := make(chan os.Signal, 1)

@@ -21,9 +21,9 @@ type Config struct {
 	DBSSLMode  string
 
 	// Kafka (optional - for publishing to other services)
-	KafkaBrokers    []string
-	KafkaOHLCVTopic string
-	KafkaEnabled    bool
+	KafkaBrokers         []string
+	KafkaQuotesTopic     string // Changed from KafkaOHLCVTopic to match architecture
+	KafkaEnabled         bool
 
 	// Kafka watchlist consumer
 	KafkaWatchlistTopic   string
@@ -60,9 +60,9 @@ func Load() (*Config, error) {
 		DBSSLMode:  getEnv("DB_SSL_MODE", "disable"),
 
 		// Kafka
-		KafkaBrokers:    strings.Split(getEnv("KAFKA_BROKERS", "localhost:19092"), ","),
-		KafkaOHLCVTopic: getEnv("KAFKA_OHLCV_TOPIC", "market.ohlcv.1min"),
-		KafkaEnabled:    getEnvBool("KAFKA_ENABLED", false),
+		KafkaBrokers:     strings.Split(getEnv("KAFKA_BROKERS", "localhost:19092"), ","),
+		KafkaQuotesTopic: getEnv("KAFKA_QUOTES_TOPIC", "stock.quotes.realtime"),
+		KafkaEnabled:     getEnvBool("KAFKA_ENABLED", true), // Default to enabled
 
 		// Kafka watchlist consumer
 		KafkaWatchlistTopic:  getEnv("KAFKA_WATCHLIST_TOPIC", "trading.watchlist"),
