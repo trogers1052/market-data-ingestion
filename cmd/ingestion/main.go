@@ -67,8 +67,8 @@ func main() {
 	defer repo.Close()
 	log.Println("Connected to TimescaleDB")
 
-	// Run migrations
-	if err := runMigrations(cfg.DatabaseDSN()); err != nil {
+	// Run migrations (requires URL format with postgres:// scheme)
+	if err := runMigrations(cfg.DatabaseURL()); err != nil {
 		log.Fatalf("Failed to run database migrations: %v", err)
 	}
 
