@@ -10,6 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/joho/godotenv"
 	"github.com/trogers1052/market-data-ingestion/internal/config"
 	"github.com/trogers1052/market-data-ingestion/internal/database"
@@ -63,6 +66,11 @@ func main() {
 	}
 	defer repo.Close()
 	log.Println("Connected to TimescaleDB")
+
+	// Run migrations
+	if err := runMigrations(cfg.DatabaseDSN()); err != nil {
+		log.Fatalf("Failed to run database migrations: %v", err)
+	}
 
 	// Create Polygon client
 	polygonClient := polygon.NewClient(cfg.PolygonAPIKey)
@@ -364,6 +372,29 @@ func main() {
 	}
 
 	log.Println("Service stopped")
+}
+
+func runMigrations(databaseUrl string) error {
+	// The "file://" prefix tells the migrate library to use the file driver
+	// Specify the path to your migrations directory
+	m, err := migrate.New(
+		"file://./db/migrations", // Path to your migrations directory
+		databaseUrl)
+	if err != nil {
+		log.Fatalf("could not create migrate instance: %v", err)
+	}
+
+	// Apply all available migrations up to the latest version
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		log.Fatalf("failed to apply migrations: %v", err)
+	}
+
+	// If ErrNoChange is returned, it simply means the database was already current
+	if err == migrate.ErrNoChange {
+		log.Println("No migrations to apply; database is up to date.")
+	}
+
+	return nil
 }
 
 // printQualityReport prints a data quality report
