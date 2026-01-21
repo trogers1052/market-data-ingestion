@@ -13,18 +13,18 @@ import (
 
 // QuoteEvent represents a quote event published to Kafka
 type QuoteEvent struct {
-	EventType    string          `json:"event_type"`
-	Source       string          `json:"source"`
-	Timestamp    string          `json:"timestamp"`
+	EventType     string         `json:"event_type"`
+	Source        string         `json:"source"`
+	Timestamp     string         `json:"timestamp"`
 	SchemaVersion string         `json:"schema_version"`
-	Data         QuoteEventData  `json:"data"`
+	Data          QuoteEventData `json:"data"`
 }
 
 // QuoteEventData holds the quote data
 type QuoteEventData struct {
 	Symbol     string    `json:"symbol"`
 	Time       time.Time `json:"time"`
-	Open       string    `json:"open"`       // Decimal as string for JSON
+	Open       string    `json:"open"` // Decimal as string for JSON
 	High       string    `json:"high"`
 	Low        string    `json:"low"`
 	Close      string    `json:"close"`
@@ -49,7 +49,7 @@ func NewProducer(brokers []string, topic string, enabled bool) (*Producer, error
 
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
-	config.Producer.RequiredAcks = sarama.WaitForOne // Wait for leader acknowledgment
+	config.Producer.RequiredAcks = sarama.WaitForLocal // Wait for leader acknowledgment
 	config.Producer.Retry.Max = 3
 	config.Producer.Compression = sarama.CompressionSnappy
 
@@ -73,9 +73,9 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV) error {
 	}
 
 	event := QuoteEvent{
-		EventType:    "QUOTE_UPDATE",
-		Source:       "polygon",
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		EventType:     "QUOTE_UPDATE",
+		Source:        "polygon",
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		SchemaVersion: "1.0",
 		Data: QuoteEventData{
 			Symbol:     bar.Symbol,
@@ -141,9 +141,9 @@ func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV) 
 	messages := make([]*sarama.ProducerMessage, 0, len(bars))
 	for _, bar := range bars {
 		event := QuoteEvent{
-			EventType:    "QUOTE_UPDATE",
-			Source:       "polygon",
-			Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			EventType:     "QUOTE_UPDATE",
+			Source:        "polygon",
+			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			SchemaVersion: "1.0",
 			Data: QuoteEventData{
 				Symbol:     bar.Symbol,
