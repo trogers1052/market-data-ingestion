@@ -20,6 +20,10 @@ const (
 	IngestionStatusKey       = "ingestion:status"          // Overall service status
 	SymbolFreshnessKeyPrefix = "ingestion:symbol:"         // Per-symbol freshness (suffix: {SYMBOL}:freshness)
 	SymbolFreshnessTTL       = 300                         // 5 minutes TTL for freshness data
+
+	// Backfill tracking keys (persistent, no TTL)
+	BackfillCompletedSetKey    = "backfill:completed"       // Set of symbols with completed backfill
+	BackfillCompletedKeyPrefix = "backfill:symbol:"         // Per-symbol completion info (suffix: {SYMBOL})
 )
 
 // WatchlistStock represents a stock from the watchlist
@@ -267,4 +271,139 @@ func (c *Client) IsSymbolDataReady(ctx context.Context, symbol string) (bool, st
 	}
 
 	return true, "", nil
+}
+
+// ============================================================================
+// Backfill Completion Tracking Methods
+// ============================================================================
+
+// BackfillCompletion represents backfill completion info for a symbol
+type BackfillCompletion struct {
+	Symbol        string `json:"symbol"`
+	CompletedAt   string `json:"completed_at"`    // ISO timestamp
+	BackfillStart string `json:"backfill_start"`  // Earliest data date
+	BackfillEnd   string `json:"backfill_end"`    // Latest data date
+	TotalBars     int64  `json:"total_bars"`      // Number of bars backfilled
+	Months        int    `json:"months"`          // Months of data requested
+}
+
+// MarkBackfillComplete marks a symbol's backfill as complete in Redis
+func (c *Client) MarkBackfillComplete(ctx context.Context, completion *BackfillCompletion) error {
+	// Add to completed set
+	if err := c.client.SAdd(ctx, BackfillCompletedSetKey, completion.Symbol).Err(); err != nil {
+		return fmt.Errorf("failed to add symbol to completed set: %w", err)
+	}
+
+	// Store completion details
+	data, err := json.Marshal(completion)
+	if err != nil {
+		return fmt.Errorf("failed to marshal completion data: %w", err)
+	}
+
+	key := BackfillCompletedKeyPrefix + completion.Symbol
+	if err := c.client.Set(ctx, key, data, 0).Err(); err != nil { // No TTL - persistent
+		return fmt.Errorf("failed to set backfill completion for %s: %w", completion.Symbol, err)
+	}
+
+	log.Printf("Marked backfill complete in Redis for %s", completion.Symbol)
+	return nil
+}
+
+// IsBackfillComplete checks if a symbol's backfill is marked complete in Redis
+func (c *Client) IsBackfillComplete(ctx context.Context, symbol string) (bool, error) {
+	exists, err := c.client.SIsMember(ctx, BackfillCompletedSetKey, symbol).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to check backfill completion for %s: %w", symbol, err)
+	}
+	return exists, nil
+}
+
+// GetBackfillCompletion retrieves backfill completion info for a symbol
+func (c *Client) GetBackfillCompletion(ctx context.Context, symbol string) (*BackfillCompletion, error) {
+	key := BackfillCompletedKeyPrefix + symbol
+	data, err := c.client.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return nil, nil // Not completed
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get backfill completion for %s: %w", symbol, err)
+	}
+
+	var completion BackfillCompletion
+	if err := json.Unmarshal([]byte(data), &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse backfill completion for %s: %w", symbol, err)
+	}
+
+	return &completion, nil
+}
+
+// GetCompletedBackfills returns all symbols that have completed backfill
+func (c *Client) GetCompletedBackfills(ctx context.Context) ([]string, error) {
+	symbols, err := c.client.SMembers(ctx, BackfillCompletedSetKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get completed backfills: %w", err)
+	}
+	return symbols, nil
+}
+
+// GetAllBackfillCompletions returns completion info for all completed symbols
+func (c *Client) GetAllBackfillCompletions(ctx context.Context) (map[string]*BackfillCompletion, error) {
+	symbols, err := c.GetCompletedBackfills(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]*BackfillCompletion)
+	for _, symbol := range symbols {
+		completion, err := c.GetBackfillCompletion(ctx, symbol)
+		if err != nil {
+			log.Printf("Warning: failed to get completion for %s: %v", symbol, err)
+			continue
+		}
+		if completion != nil {
+			result[symbol] = completion
+		}
+	}
+
+	return result, nil
+}
+
+// ClearBackfillComplete removes a symbol from the completed set (for re-backfill)
+func (c *Client) ClearBackfillComplete(ctx context.Context, symbol string) error {
+	// Remove from set
+	if err := c.client.SRem(ctx, BackfillCompletedSetKey, symbol).Err(); err != nil {
+		return fmt.Errorf("failed to remove symbol from completed set: %w", err)
+	}
+
+	// Delete completion details
+	key := BackfillCompletedKeyPrefix + symbol
+	if err := c.client.Del(ctx, key).Err(); err != nil {
+		return fmt.Errorf("failed to delete backfill completion for %s: %w", symbol, err)
+	}
+
+	log.Printf("Cleared backfill completion in Redis for %s", symbol)
+	return nil
+}
+
+// ClearAllBackfillComplete clears all backfill completion records (for full re-backfill)
+func (c *Client) ClearAllBackfillComplete(ctx context.Context) error {
+	// Get all completed symbols first
+	symbols, err := c.GetCompletedBackfills(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Delete each symbol's completion record
+	for _, symbol := range symbols {
+		key := BackfillCompletedKeyPrefix + symbol
+		c.client.Del(ctx, key)
+	}
+
+	// Delete the set
+	if err := c.client.Del(ctx, BackfillCompletedSetKey).Err(); err != nil {
+		return fmt.Errorf("failed to delete completed set: %w", err)
+	}
+
+	log.Printf("Cleared all backfill completion records in Redis (%d symbols)", len(symbols))
+	return nil
 }
