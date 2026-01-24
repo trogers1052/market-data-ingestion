@@ -162,6 +162,10 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 		}
 
 		if len(bars) > 0 {
+			// Log first and last bar for debugging
+			log.Printf("[%s] DEBUG: First bar time: %s, Last bar time: %s",
+				symbol, bars[0].Time.Format("2006-01-02 15:04"), bars[len(bars)-1].Time.Format("2006-01-02 15:04"))
+
 			// Insert bars in batches
 			if err := s.repo.InsertOHLCVBatch(ctx, bars); err != nil {
 				errMsg := fmt.Sprintf("failed to insert data: %v", err)
@@ -169,6 +173,10 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 				s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusFailed, nil, nil, errMsg)
 				return totalBars, fmt.Errorf("failed to insert bars for %s: %w", symbol, err)
 			}
+
+			// Verify insert worked by checking bar count
+			newCount, _ := s.repo.GetBarCount(ctx, symbol)
+			log.Printf("[%s] DEBUG: After insert, total bars in DB: %d", symbol, newCount)
 
 			// Publish to Kafka (non-blocking, log errors but don't fail)
 			if s.kafkaProducer != nil {
@@ -192,6 +200,13 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 			return totalBars, ctx.Err()
 		case <-time.After(250 * time.Millisecond): // 4 requests per second max
 		}
+	}
+
+	// Final verification of what's in the database
+	finalMin, finalMax, _ := s.repo.GetDataRange(ctx, symbol)
+	if finalMin != nil && finalMax != nil {
+		log.Printf("[%s] DEBUG: Final data range after fetch: %s to %s",
+			symbol, finalMin.Format("2006-01-02"), finalMax.Format("2006-01-02"))
 	}
 
 	return totalBars, nil
