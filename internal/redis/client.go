@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -14,6 +15,11 @@ const (
 	WatchlistKey = "trading:watchlist"
 	// WatchlistDetailsKey is the Redis key for the watchlist details hash
 	WatchlistDetailsKey = "trading:watchlist:details"
+
+	// Data freshness keys
+	IngestionStatusKey       = "ingestion:status"          // Overall service status
+	SymbolFreshnessKeyPrefix = "ingestion:symbol:"         // Per-symbol freshness (suffix: {SYMBOL}:freshness)
+	SymbolFreshnessTTL       = 300                         // 5 minutes TTL for freshness data
 )
 
 // WatchlistStock represents a stock from the watchlist
@@ -22,6 +28,34 @@ type WatchlistStock struct {
 	Name          string `json:"name"`
 	InstrumentURL string `json:"instrument_url"`
 	AddedAt       string `json:"added_at"`
+}
+
+// IngestionStatus represents the overall service status
+type IngestionStatus struct {
+	Status          string `json:"status"`           // "running", "stopped", "error"
+	IsMarketHours   bool   `json:"is_market_hours"`  // Whether market is currently open
+	LastHeartbeat   string `json:"last_heartbeat"`   // ISO timestamp of last heartbeat
+	SymbolsTracked  int    `json:"symbols_tracked"`  // Number of symbols being tracked
+	BarsReceived    int64  `json:"bars_received"`    // Total bars received in session
+	BarsInserted    int64  `json:"bars_inserted"`    // Total bars inserted in session
+	BackfillPending int    `json:"backfill_pending"` // Symbols waiting for backfill
+	ErrorMessage    string `json:"error_message,omitempty"`
+}
+
+// SymbolFreshness represents data freshness for a specific symbol
+type SymbolFreshness struct {
+	Symbol           string `json:"symbol"`
+	Status           string `json:"status"`             // "current", "stale", "backfilling", "error", "no_data"
+	LastBarTime      string `json:"last_bar_time"`      // ISO timestamp of most recent bar
+	BarCount         int64  `json:"bar_count"`          // Total bars available
+	BackfillStatus   string `json:"backfill_status"`    // "completed", "in_progress", "pending", "failed"
+	BackfillStart    string `json:"backfill_start"`     // Earliest data available
+	BackfillEnd      string `json:"backfill_end"`       // Latest backfill data
+	CoveragePercent  float64 `json:"coverage_percent"`  // Data coverage percentage
+	GapsDetected     int    `json:"gaps_detected"`      // Number of gaps in data
+	LastUpdated      string `json:"last_updated"`       // When this status was updated
+	MinutesStale     int    `json:"minutes_stale"`      // Minutes since last bar (0 = current)
+	IsReady          bool   `json:"is_ready"`           // True if data is ready for analytics
 }
 
 // Client wraps the Redis client for watchlist operations
@@ -115,4 +149,122 @@ func (c *Client) WatchlistCount(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to count watchlist: %w", err)
 	}
 	return count, nil
+}
+
+// ============================================================================
+// Data Freshness Tracking Methods
+// ============================================================================
+
+// UpdateIngestionStatus updates the overall service status in Redis
+func (c *Client) UpdateIngestionStatus(ctx context.Context, status *IngestionStatus) error {
+	data, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("failed to marshal ingestion status: %w", err)
+	}
+
+	// Set with 5-minute TTL - if service stops, status expires
+	err = c.client.Set(ctx, IngestionStatusKey, data, SymbolFreshnessTTL*time.Second).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set ingestion status: %w", err)
+	}
+
+	return nil
+}
+
+// GetIngestionStatus retrieves the overall service status from Redis
+func (c *Client) GetIngestionStatus(ctx context.Context) (*IngestionStatus, error) {
+	data, err := c.client.Get(ctx, IngestionStatusKey).Result()
+	if err == redis.Nil {
+		return nil, nil // No status set
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ingestion status: %w", err)
+	}
+
+	var status IngestionStatus
+	if err := json.Unmarshal([]byte(data), &status); err != nil {
+		return nil, fmt.Errorf("failed to parse ingestion status: %w", err)
+	}
+
+	return &status, nil
+}
+
+// UpdateSymbolFreshness updates the data freshness status for a specific symbol
+func (c *Client) UpdateSymbolFreshness(ctx context.Context, freshness *SymbolFreshness) error {
+	data, err := json.Marshal(freshness)
+	if err != nil {
+		return fmt.Errorf("failed to marshal symbol freshness: %w", err)
+	}
+
+	key := SymbolFreshnessKeyPrefix + freshness.Symbol + ":freshness"
+	err = c.client.Set(ctx, key, data, SymbolFreshnessTTL*time.Second).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set symbol freshness for %s: %w", freshness.Symbol, err)
+	}
+
+	return nil
+}
+
+// GetSymbolFreshness retrieves the data freshness status for a specific symbol
+func (c *Client) GetSymbolFreshness(ctx context.Context, symbol string) (*SymbolFreshness, error) {
+	key := SymbolFreshnessKeyPrefix + symbol + ":freshness"
+	data, err := c.client.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return nil, nil // No freshness data
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get symbol freshness for %s: %w", symbol, err)
+	}
+
+	var freshness SymbolFreshness
+	if err := json.Unmarshal([]byte(data), &freshness); err != nil {
+		return nil, fmt.Errorf("failed to parse symbol freshness: %w", err)
+	}
+
+	return &freshness, nil
+}
+
+// GetAllSymbolFreshness retrieves freshness data for all tracked symbols
+func (c *Client) GetAllSymbolFreshness(ctx context.Context) (map[string]*SymbolFreshness, error) {
+	// Get all keys matching the pattern
+	pattern := SymbolFreshnessKeyPrefix + "*:freshness"
+	keys, err := c.client.Keys(ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get freshness keys: %w", err)
+	}
+
+	result := make(map[string]*SymbolFreshness)
+	for _, key := range keys {
+		data, err := c.client.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+
+		var freshness SymbolFreshness
+		if err := json.Unmarshal([]byte(data), &freshness); err != nil {
+			continue
+		}
+		result[freshness.Symbol] = &freshness
+	}
+
+	return result, nil
+}
+
+// IsSymbolDataReady checks if a symbol's data is ready for analytics
+func (c *Client) IsSymbolDataReady(ctx context.Context, symbol string) (bool, string, error) {
+	freshness, err := c.GetSymbolFreshness(ctx, symbol)
+	if err != nil {
+		return false, "", err
+	}
+
+	if freshness == nil {
+		return false, "no freshness data available", nil
+	}
+
+	if !freshness.IsReady {
+		return false, fmt.Sprintf("data not ready: status=%s, backfill=%s",
+			freshness.Status, freshness.BackfillStatus), nil
+	}
+
+	return true, "", nil
 }

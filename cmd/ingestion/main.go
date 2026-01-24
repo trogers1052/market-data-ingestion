@@ -21,6 +21,7 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/polygon"
 	"github.com/trogers1052/market-data-ingestion/internal/quality"
 	redisclient "github.com/trogers1052/market-data-ingestion/internal/redis"
+	"github.com/trogers1052/market-data-ingestion/internal/status"
 	"github.com/trogers1052/market-data-ingestion/internal/symbols"
 	"github.com/trogers1052/market-data-ingestion/internal/watchlist"
 )
@@ -239,40 +240,42 @@ func main() {
 
 	scheduler.LogStatus()
 
+	// Connect to Redis (used by watchlist sync and status manager)
+	var redisClient *redisclient.Client
+	log.Println("Connecting to Redis...")
+	redisClient, err = redisclient.NewClient(cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to Redis: %v", err)
+		log.Println("Continuing without Redis features...")
+	} else {
+		defer redisClient.Close()
+	}
+
 	// Initialize watchlist sync if enabled
 	var watchlistSyncService *watchlist.SyncService
-	if cfg.WatchlistSyncEnabled {
-		log.Println("Watchlist sync enabled, connecting to Redis...")
+	if cfg.WatchlistSyncEnabled && redisClient != nil {
+		log.Println("Watchlist sync enabled...")
 
-		// Connect to Redis
-		redisClient, err := redisclient.NewClient(cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
+		// Create watchlist sync service
+		watchlistSyncService = watchlist.NewSyncService(repo, redisClient, polygonClient)
+
+		// Create Kafka consumer
+		consumer, err := kafka.NewWatchlistConsumer(
+			cfg.KafkaBrokers,
+			cfg.KafkaWatchlistTopic,
+			cfg.KafkaConsumerGroup,
+			watchlistSyncService,
+		)
 		if err != nil {
-			log.Printf("Warning: Failed to connect to Redis: %v", err)
-			log.Println("Continuing without watchlist sync...")
+			log.Printf("Warning: Failed to create Kafka consumer: %v", err)
 		} else {
-			defer redisClient.Close()
+			watchlistSyncService.SetConsumer(consumer)
+			log.Printf("Kafka watchlist consumer ready for topic: %s", cfg.KafkaWatchlistTopic)
+		}
 
-			// Create watchlist sync service
-			watchlistSyncService = watchlist.NewSyncService(repo, redisClient, polygonClient)
-
-			// Create Kafka consumer
-			consumer, err := kafka.NewWatchlistConsumer(
-				cfg.KafkaBrokers,
-				cfg.KafkaWatchlistTopic,
-				cfg.KafkaConsumerGroup,
-				watchlistSyncService,
-			)
-			if err != nil {
-				log.Printf("Warning: Failed to create Kafka consumer: %v", err)
-			} else {
-				watchlistSyncService.SetConsumer(consumer)
-				log.Printf("Kafka watchlist consumer ready for topic: %s", cfg.KafkaWatchlistTopic)
-			}
-
-			// Sync initial watchlist from Redis
-			if _, err := watchlistSyncService.SyncFromRedis(ctx); err != nil {
-				log.Printf("Warning: Failed to sync initial watchlist from Redis: %v", err)
-			}
+		// Sync initial watchlist from Redis
+		if _, err := watchlistSyncService.SyncFromRedis(ctx); err != nil {
+			log.Printf("Warning: Failed to sync initial watchlist from Redis: %v", err)
 		}
 	}
 
@@ -323,6 +326,15 @@ func main() {
 
 	// Create real-time ingestion service
 	realtimeService := ingestion.NewRealtimeService(polygonClient, repo, scheduler, kafkaProducer)
+
+	// Create and start status manager (publishes data freshness to Redis)
+	var statusManager *status.Manager
+	if redisClient != nil {
+		statusManager = status.NewManager(repo, redisClient, scheduler, realtimeService)
+		statusManager.Start(ctx)
+		defer statusManager.Stop()
+		log.Println("Status manager started - publishing data freshness to Redis")
+	}
 
 	// Set up signal handling for graceful shutdown
 	quit := make(chan os.Signal, 1)
