@@ -40,13 +40,19 @@ func NewBackfillService(polygonClient *polygon.Client, repo *database.Repository
 // BackfillSymbol fetches and stores historical data for a single symbol.
 // It intelligently checks existing data and only fetches what's missing:
 // - No data: fetches full range (startDate to endDate)
-// - Partial data: extends backwards and/or forwards as needed
+// - Partial data: extends backwards and/or forwards as needed (separately)
 // - Up to date: skips fetching entirely
 func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) error {
 	// Check existing data range first
 	minTime, maxTime, err := s.repo.GetDataRange(ctx, symbol)
 	if err != nil {
-		log.Printf("Warning: failed to get existing data range for %s: %v", symbol, err)
+		log.Printf("[%s] ERROR: failed to get existing data range: %v", symbol, err)
+	}
+
+	// Also get bar count for debugging
+	barCount, countErr := s.repo.GetBarCount(ctx, symbol)
+	if countErr != nil {
+		log.Printf("[%s] Warning: failed to get bar count: %v", symbol, countErr)
 	}
 
 	// Calculate target date range
@@ -55,62 +61,75 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 	endDate := time.Now().AddDate(0, 0, -s.delayDays)
 	startDate := time.Now().AddDate(0, -s.months, 0)
 
-	// Determine what data we actually need to fetch
-	var fetchStart, fetchEnd time.Time
-	needsBackfill := false
+	// Debug logging
+	log.Printf("[%s] DEBUG: barCount=%d, startDate=%s, endDate=%s",
+		symbol, barCount, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 
 	if minTime == nil || maxTime == nil {
 		// No existing data, fetch everything
-		fetchStart = startDate
-		fetchEnd = endDate
-		needsBackfill = true
 		log.Printf("[%s] No existing data - will fetch full %d months: %s to %s",
-			symbol, s.months, fetchStart.Format("2006-01-02"), fetchEnd.Format("2006-01-02"))
-	} else {
-		// Log current data range
-		log.Printf("[%s] Existing data: %s to %s",
-			symbol, minTime.Format("2006-01-02"), maxTime.Format("2006-01-02"))
-
-		// Check if we need to extend backwards
-		if minTime.After(startDate) {
-			fetchStart = startDate
-			fetchEnd = *minTime
-			needsBackfill = true
-			log.Printf("[%s] Need to extend backwards: %s to %s",
-				symbol, fetchStart.Format("2006-01-02"), fetchEnd.Format("2006-01-02"))
+			symbol, s.months, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+		bars, err := s.fetchDateRange(ctx, symbol, startDate, endDate)
+		if err != nil {
+			return err
 		}
-
-		// Check if we need to extend forwards (catch up to now)
-		// Only fetch if we're more than 1 day behind
-		oneDayAgo := endDate.AddDate(0, 0, -1)
-		if maxTime.Before(oneDayAgo) {
-			if needsBackfill {
-				// We already have a range, extend it
-				fetchEnd = endDate
-			} else {
-				// Only need to extend forwards
-				fetchStart = *maxTime
-				fetchEnd = endDate
-				needsBackfill = true
-			}
-			log.Printf("[%s] Need to extend forwards: %s to %s",
-				symbol, fetchStart.Format("2006-01-02"), fetchEnd.Format("2006-01-02"))
+		log.Printf("[%s] Backfill complete: %d total bars inserted", symbol, bars)
+		// Update status to completed
+		newMin, newMax, _ := s.repo.GetDataRange(ctx, symbol)
+		if updateErr := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusCompleted, newMin, newMax, ""); updateErr != nil {
+			log.Printf("[%s] Warning: failed to update backfill status: %v", symbol, updateErr)
 		}
-
-		if !needsBackfill {
-			log.Printf("[%s] Data already up to date, skipping", symbol)
-			// Update status to completed even though we didn't fetch
-			if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusCompleted, minTime, maxTime, ""); err != nil {
-				log.Printf("Warning: failed to update backfill status: %v", err)
-			}
-			return nil
-		}
-	}
-
-	if !needsBackfill {
 		return nil
 	}
 
+	// Log current data range
+	log.Printf("[%s] Existing data: %s to %s",
+		symbol, minTime.Format("2006-01-02"), maxTime.Format("2006-01-02"))
+
+	var totalBars int
+
+	// Check if we need to extend backwards (fetch older data)
+	if minTime.After(startDate) {
+		log.Printf("[%s] Extending backwards: %s to %s",
+			symbol, startDate.Format("2006-01-02"), minTime.Format("2006-01-02"))
+		bars, err := s.fetchDateRange(ctx, symbol, startDate, *minTime)
+		if err != nil {
+			return err
+		}
+		totalBars += bars
+	}
+
+	// Check if we need to extend forwards (catch up to now)
+	// Only fetch if we're more than 1 day behind
+	oneDayAgo := endDate.AddDate(0, 0, -1)
+	if maxTime.Before(oneDayAgo) {
+		log.Printf("[%s] Extending forwards: %s to %s",
+			symbol, maxTime.Format("2006-01-02"), endDate.Format("2006-01-02"))
+		bars, err := s.fetchDateRange(ctx, symbol, *maxTime, endDate)
+		if err != nil {
+			return err
+		}
+		totalBars += bars
+	}
+
+	if totalBars == 0 {
+		log.Printf("[%s] Data already up to date, skipping", symbol)
+	} else {
+		log.Printf("[%s] Backfill complete: %d total bars inserted", symbol, totalBars)
+	}
+
+	// Update status to completed
+	newMin, newMax, _ := s.repo.GetDataRange(ctx, symbol)
+	if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusCompleted, newMin, newMax, ""); err != nil {
+		log.Printf("[%s] Warning: failed to update backfill status: %v", symbol, err)
+	}
+
+	return nil
+}
+
+// fetchDateRange fetches data for a specific date range and inserts it into the database.
+// Returns the number of bars inserted.
+func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fetchStart, fetchEnd time.Time) (int, error) {
 	// Update status to in_progress
 	if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusInProgress, &fetchStart, &fetchEnd, ""); err != nil {
 		log.Printf("[%s] Warning: failed to update backfill status: %v", symbol, err)
@@ -139,7 +158,7 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 			errMsg := fmt.Sprintf("failed to fetch data: %v", err)
 			log.Printf("[%s] Error: %s", symbol, errMsg)
 			s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusFailed, nil, nil, errMsg)
-			return fmt.Errorf("backfill failed for %s: %w", symbol, err)
+			return totalBars, fmt.Errorf("backfill failed for %s: %w", symbol, err)
 		}
 
 		if len(bars) > 0 {
@@ -148,7 +167,7 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 				errMsg := fmt.Sprintf("failed to insert data: %v", err)
 				log.Printf("[%s] Error: %s", symbol, errMsg)
 				s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusFailed, nil, nil, errMsg)
-				return fmt.Errorf("failed to insert bars for %s: %w", symbol, err)
+				return totalBars, fmt.Errorf("failed to insert bars for %s: %w", symbol, err)
 			}
 
 			// Publish to Kafka (non-blocking, log errors but don't fail)
@@ -170,19 +189,12 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 		// Paid tiers are higher, but let's be conservative
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return totalBars, ctx.Err()
 		case <-time.After(250 * time.Millisecond): // 4 requests per second max
 		}
 	}
 
-	// Update backfill status to completed
-	if err := s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusCompleted, &fetchStart, &fetchEnd, ""); err != nil {
-		log.Printf("[%s] Warning: failed to update backfill status: %v", symbol, err)
-	}
-
-	log.Printf("[%s] Backfill complete: %d bars inserted", symbol, totalBars)
-
-	return nil
+	return totalBars, nil
 }
 
 // BackfillAll fetches historical data for all monitored symbols
