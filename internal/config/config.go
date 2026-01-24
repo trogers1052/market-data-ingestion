@@ -21,14 +21,14 @@ type Config struct {
 	DBSSLMode  string
 
 	// Kafka (optional - for publishing to other services)
-	KafkaBrokers         []string
-	KafkaQuotesTopic     string // Changed from KafkaOHLCVTopic to match architecture
-	KafkaEnabled         bool
+	KafkaBrokers     []string
+	KafkaQuotesTopic string // Changed from KafkaOHLCVTopic to match architecture
+	KafkaEnabled     bool
 
 	// Kafka watchlist consumer
-	KafkaWatchlistTopic   string
-	KafkaConsumerGroup    string
-	WatchlistSyncEnabled  bool
+	KafkaWatchlistTopic  string
+	KafkaConsumerGroup   string
+	WatchlistSyncEnabled bool
 
 	// Redis (for reading shared watchlist)
 	RedisHost     string
@@ -77,8 +77,8 @@ func Load() (*Config, error) {
 
 		// Ingestion
 		PollIntervalSeconds: getEnvInt("POLL_INTERVAL_SECONDS", 60),
-		BackfillMonths:      getEnvInt("BACKFILL_MONTHS", 6),
-		MarketOpenHour:      getEnvInt("MARKET_OPEN_HOUR", 4),  // 4am ET (pre-market)
+		BackfillMonths:      getEnvInt("BACKFILL_MONTHS", 60),
+		MarketOpenHour:      getEnvInt("MARKET_OPEN_HOUR", 4),   // 4am ET (pre-market)
 		MarketCloseHour:     getEnvInt("MARKET_CLOSE_HOUR", 20), // 8pm ET (after-hours)
 		EnablePreMarket:     getEnvBool("ENABLE_PRE_MARKET", true),
 		EnableAfterHours:    getEnvBool("ENABLE_AFTER_HOURS", true),
