@@ -58,6 +58,7 @@ func main() {
 
 	log.Printf("Database: %s:%d/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
 	log.Printf("Backfill months: %d", cfg.BackfillMonths)
+	log.Printf("Backfill delay days: %d (excludes recent data from REST API for delayed subscriptions)", cfg.BackfillDelayDays)
 	log.Printf("Market hours: %d:00 - %d:00 ET", cfg.MarketOpenHour, cfg.MarketCloseHour)
 
 	// Connect to database
@@ -294,7 +295,9 @@ func main() {
 	}
 
 	// Create backfill service
-	backfillService := ingestion.NewBackfillService(polygonClient, repo, cfg.BackfillMonths, kafkaProducer)
+	// BackfillDelayDays=1 means exclude today's data from REST API backfill (for delayed Polygon subscriptions)
+	// WebSocket handles today's data with 15-minute delay
+	backfillService := ingestion.NewBackfillService(polygonClient, repo, cfg.BackfillMonths, kafkaProducer, cfg.BackfillDelayDays)
 
 	// Handle backfill-only mode
 	if *backfillOnly {

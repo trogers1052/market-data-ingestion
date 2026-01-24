@@ -39,6 +39,7 @@ type Config struct {
 	// Ingestion settings
 	PollIntervalSeconds int
 	BackfillMonths      int
+	BackfillDelayDays   int  // Days to exclude from REST API backfill (1 for delayed subscriptions)
 	MarketOpenHour      int  // ET timezone (e.g., 4 for pre-market, 9 for regular)
 	MarketCloseHour     int  // ET timezone (e.g., 20 for after-hours, 16 for regular)
 	EnablePreMarket     bool // Include pre-market hours (4am-9:30am ET)
@@ -78,8 +79,9 @@ func Load() (*Config, error) {
 		// Ingestion
 		PollIntervalSeconds: getEnvInt("POLL_INTERVAL_SECONDS", 60),
 		BackfillMonths:      getEnvInt("BACKFILL_MONTHS", 60),
-		MarketOpenHour:      getEnvInt("MARKET_OPEN_HOUR", 4),   // 4am ET (pre-market)
-		MarketCloseHour:     getEnvInt("MARKET_CLOSE_HOUR", 20), // 8pm ET (after-hours)
+		BackfillDelayDays:   getEnvInt("BACKFILL_DELAY_DAYS", 1), // 1 = exclude today (for delayed subscriptions)
+		MarketOpenHour:      getEnvInt("MARKET_OPEN_HOUR", 4),    // 4am ET (pre-market)
+		MarketCloseHour:     getEnvInt("MARKET_CLOSE_HOUR", 20),  // 8pm ET (after-hours)
 		EnablePreMarket:     getEnvBool("ENABLE_PRE_MARKET", true),
 		EnableAfterHours:    getEnvBool("ENABLE_AFTER_HOURS", true),
 	}

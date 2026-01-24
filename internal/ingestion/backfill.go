@@ -18,15 +18,22 @@ type BackfillService struct {
 	repo          *database.Repository
 	months        int
 	kafkaProducer *kafka.Producer
+	delayDays     int // Number of days to exclude from REST API backfill (for delayed subscriptions)
 }
 
 // NewBackfillService creates a new backfill service
-func NewBackfillService(polygonClient *polygon.Client, repo *database.Repository, months int, kafkaProducer *kafka.Producer) *BackfillService {
+// delayDays should be set to 1 for delayed Polygon.io subscriptions (15-min delayed data)
+// This prevents the DELAYED API error by only fetching data up to T-1
+func NewBackfillService(polygonClient *polygon.Client, repo *database.Repository, months int, kafkaProducer *kafka.Producer, delayDays int) *BackfillService {
+	if delayDays < 0 {
+		delayDays = 0
+	}
 	return &BackfillService{
 		polygonClient: polygonClient,
 		repo:          repo,
 		months:        months,
 		kafkaProducer: kafkaProducer,
+		delayDays:     delayDays,
 	}
 }
 
@@ -41,8 +48,10 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 	}
 
 	// Calculate target date range
-	endDate := time.Now()
-	startDate := endDate.AddDate(0, -s.months, 0)
+	// For delayed subscriptions, exclude recent days to avoid DELAYED API errors
+	// WebSocket handles today's delayed data in real-time
+	endDate := time.Now().AddDate(0, 0, -s.delayDays)
+	startDate := time.Now().AddDate(0, -s.months, 0)
 
 	// Determine what data we actually need to fetch
 	var fetchStart, fetchEnd time.Time
@@ -272,13 +281,16 @@ func (s *BackfillService) FillGaps(ctx context.Context, symbol string) error {
 		}
 	}
 
-	// Check if we need to extend forwards (catch up to now)
-	yesterday := time.Now().AddDate(0, 0, -1)
-	if maxTime.Before(yesterday) {
-		log.Printf("Extending data forwards from %s to now",
-			maxTime.Format("2006-01-02"))
+	// Check if we need to extend forwards (catch up to allowed date)
+	// For delayed subscriptions, only fetch up to T-delayDays to avoid DELAYED API errors
+	cutoffDate := time.Now().AddDate(0, 0, -s.delayDays)
+	checkDate := cutoffDate.AddDate(0, 0, -1)
+	if maxTime.Before(checkDate) {
+		log.Printf("Extending data forwards from %s to %s",
+			maxTime.Format("2006-01-02"),
+			cutoffDate.Format("2006-01-02"))
 
-		bars, err := s.polygonClient.GetMinuteBars(ctx, symbol, *maxTime, time.Now())
+		bars, err := s.polygonClient.GetMinuteBars(ctx, symbol, *maxTime, cutoffDate)
 		if err != nil {
 			return fmt.Errorf("failed to fetch recent data: %w", err)
 		}
