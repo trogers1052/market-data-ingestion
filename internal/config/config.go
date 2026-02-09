@@ -45,9 +45,8 @@ type Config struct {
 	EnablePreMarket     bool // Include pre-market hours (4am-9:30am ET)
 	EnableAfterHours    bool // Include after-hours (4pm-8pm ET)
 
-	// Polling mode (for delayed Polygon subscriptions)
-	UsePollingMode      bool // Use REST API polling instead of WebSocket
-	PollingDelayMinutes int  // How far behind real-time to poll (15 for delayed subscriptions)
+	// Polling settings
+	PollingDelayMinutes int // How far behind real-time to poll (15 for delayed subscriptions)
 }
 
 // Load loads configuration from environment variables
@@ -89,8 +88,7 @@ func Load() (*Config, error) {
 		EnablePreMarket:     getEnvBool("ENABLE_PRE_MARKET", true),
 		EnableAfterHours:    getEnvBool("ENABLE_AFTER_HOURS", true),
 
-		// Polling mode (for delayed Polygon subscriptions)
-		UsePollingMode:      getEnvBool("USE_POLLING_MODE", false),  // Default: WebSocket mode
+		// Polling settings
 		PollingDelayMinutes: getEnvInt("POLLING_DELAY_MINUTES", 15), // 15-min delay for delayed subscriptions
 	}
 

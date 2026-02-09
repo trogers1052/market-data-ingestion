@@ -60,12 +60,8 @@ func main() {
 	log.Printf("Backfill months: %d", cfg.BackfillMonths)
 	log.Printf("Backfill delay days: %d (excludes recent data from REST API for delayed subscriptions)", cfg.BackfillDelayDays)
 	log.Printf("Market hours: %d:00 - %d:00 ET", cfg.MarketOpenHour, cfg.MarketCloseHour)
-	if cfg.UsePollingMode {
-		log.Printf("Data mode: REST API polling (every %ds, %d-min delay)",
-			cfg.PollIntervalSeconds, cfg.PollingDelayMinutes)
-	} else {
-		log.Println("Data mode: WebSocket real-time (requires premium Polygon subscription)")
-	}
+	log.Printf("Data mode: REST API polling (every %ds, %d-min delay)",
+		cfg.PollIntervalSeconds, cfg.PollingDelayMinutes)
 
 	// Connect to database
 	repo, err := database.NewRepository(cfg.DatabaseDSN())
@@ -333,31 +329,21 @@ func main() {
 		return
 	}
 
-	// Create ingestion service (polling or WebSocket depending on config)
-	var realtimeService *ingestion.RealtimeService
-	var pollingService *ingestion.PollingService
-
-	if cfg.UsePollingMode {
-		// Use REST API polling for delayed Polygon subscriptions
-		pollingService = ingestion.NewPollingService(
-			polygonClient,
-			repo,
-			scheduler,
-			kafkaProducer,
-			cfg.PollIntervalSeconds,
-			cfg.PollingDelayMinutes,
-		)
-		log.Println("Created polling service for delayed data")
-	} else {
-		// Use WebSocket for real-time data (requires premium subscription)
-		realtimeService = ingestion.NewRealtimeService(polygonClient, repo, scheduler, kafkaProducer)
-		log.Println("Created WebSocket service for real-time data")
-	}
+	// Create polling service for REST API data ingestion
+	pollingService := ingestion.NewPollingService(
+		polygonClient,
+		repo,
+		scheduler,
+		kafkaProducer,
+		cfg.PollIntervalSeconds,
+		cfg.PollingDelayMinutes,
+	)
+	log.Println("Created polling service")
 
 	// Create and start status manager (publishes data freshness to Redis)
 	var statusManager *status.Manager
-	if redisClient != nil && realtimeService != nil {
-		statusManager = status.NewManager(repo, redisClient, scheduler, realtimeService)
+	if redisClient != nil {
+		statusManager = status.NewManager(repo, redisClient, scheduler, pollingService)
 		statusManager.Start(ctx)
 		defer statusManager.Stop()
 		log.Println("Status manager started - publishing data freshness to Redis")
@@ -394,23 +380,15 @@ func main() {
 		}()
 	}
 
-	// Start ingestion service in background (polling or WebSocket)
+	// Start polling service in background
 	errCh := make(chan error, 1)
 	go func() {
-		if cfg.UsePollingMode {
-			errCh <- pollingService.Start(ctx)
-		} else {
-			errCh <- realtimeService.Start(ctx)
-		}
+		errCh <- pollingService.Start(ctx)
 	}()
 
 	log.Println("========================================")
-	if cfg.UsePollingMode {
-		log.Printf("Service started in POLLING mode (%d-min delay). Press Ctrl+C to stop.",
-			cfg.PollingDelayMinutes)
-	} else {
-		log.Println("Service started in WebSocket mode. Press Ctrl+C to stop.")
-	}
+	log.Printf("Service started (%d-min delay). Press Ctrl+C to stop.",
+		cfg.PollingDelayMinutes)
 	log.Println("========================================")
 
 	// Wait for shutdown signal or error
@@ -427,11 +405,7 @@ func main() {
 	log.Println("Shutting down...")
 	cancel()
 
-	if cfg.UsePollingMode {
-		pollingService.Stop()
-	} else {
-		realtimeService.Stop()
-	}
+	pollingService.Stop()
 
 	if watchlistSyncService != nil {
 		watchlistSyncService.Close()

@@ -12,12 +12,17 @@ import (
 	redisclient "github.com/trogers1052/market-data-ingestion/internal/redis"
 )
 
+// StatsProvider is an interface for services that provide statistics
+type StatsProvider interface {
+	GetStats() map[string]int64
+}
+
 // Manager handles data freshness status updates
 type Manager struct {
-	repo            *database.Repository
-	redisClient     *redisclient.Client
-	scheduler       *ingestion.MarketScheduler
-	realtimeService *ingestion.RealtimeService
+	repo          *database.Repository
+	redisClient   *redisclient.Client
+	scheduler     *ingestion.MarketScheduler
+	statsProvider StatsProvider
 
 	updateInterval time.Duration
 	stopCh         chan struct{}
@@ -29,15 +34,15 @@ func NewManager(
 	repo *database.Repository,
 	redisClient *redisclient.Client,
 	scheduler *ingestion.MarketScheduler,
-	realtimeService *ingestion.RealtimeService,
+	statsProvider StatsProvider,
 ) *Manager {
 	return &Manager{
-		repo:            repo,
-		redisClient:     redisClient,
-		scheduler:       scheduler,
-		realtimeService: realtimeService,
-		updateInterval:  30 * time.Second, // Update every 30 seconds
-		stopCh:          make(chan struct{}),
+		repo:           repo,
+		redisClient:    redisClient,
+		scheduler:      scheduler,
+		statsProvider:  statsProvider,
+		updateInterval: 30 * time.Second, // Update every 30 seconds
+		stopCh:         make(chan struct{}),
 	}
 }
 
@@ -89,10 +94,10 @@ func (m *Manager) updateIngestionStatus(ctx context.Context) {
 		return
 	}
 
-	// Get stats from realtime service
+	// Get stats from ingestion service
 	var barsReceived, barsInserted int64
-	if m.realtimeService != nil {
-		stats := m.realtimeService.GetStats()
+	if m.statsProvider != nil {
+		stats := m.statsProvider.GetStats()
 		barsReceived = stats["bars_received"]
 		barsInserted = stats["bars_inserted"]
 	}

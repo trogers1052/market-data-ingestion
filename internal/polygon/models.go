@@ -71,39 +71,6 @@ type GroupedDailyResponse struct {
 	RequestID    string         `json:"request_id"`
 }
 
-// WebSocketMessage represents a message from Polygon's WebSocket
-type WebSocketMessage struct {
-	EventType string `json:"ev"` // Event type: AM (aggregate minute), A (aggregate second), T (trade), Q (quote)
-	Symbol    string `json:"sym"`
-	Volume    int64  `json:"v"`
-	VWAP      float64 `json:"vw,omitempty"`
-	Open      float64 `json:"o"`
-	Close     float64 `json:"c"`
-	High      float64 `json:"h"`
-	Low       float64 `json:"l"`
-	Timestamp int64  `json:"s"` // Start timestamp
-	EndTime   int64  `json:"e"` // End timestamp
-}
-
-// WebSocketAuth is the authentication message for Polygon WebSocket
-type WebSocketAuth struct {
-	Action string `json:"action"`
-	Params string `json:"params"`
-}
-
-// WebSocketSubscribe is the subscription message for Polygon WebSocket
-type WebSocketSubscribe struct {
-	Action string `json:"action"`
-	Params string `json:"params"` // Comma-separated list of channels like "AM.AAPL,AM.MSFT"
-}
-
-// WebSocketStatus represents status messages from WebSocket
-type WebSocketStatus struct {
-	EventType string `json:"ev"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-}
-
 // TickerDetails contains detailed information about a ticker
 type TickerDetails struct {
 	Ticker      string `json:"ticker"`

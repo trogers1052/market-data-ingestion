@@ -5,21 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/shopspring/decimal"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 	"github.com/trogers1052/market-data-ingestion/internal/ratelimit"
 )
 
 const (
 	baseURL        = "https://api.polygon.io"
-	wsURL          = "wss://socket.polygon.io/stocks"
 	defaultTimeout = 30 * time.Second
 )
 
@@ -28,13 +23,6 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	limiter    *ratelimit.PolygonLimiter
-
-	// WebSocket
-	wsConn     *websocket.Conn
-	wsMu       sync.Mutex
-	wsHandler  func(bar models.OHLCV)
-	wsStop     chan struct{}
-	wsSymbols  []string
 }
 
 // NewClient creates a new Polygon API client
@@ -45,7 +33,6 @@ func NewClient(apiKey string) *Client {
 			Timeout: defaultTimeout,
 		},
 		limiter: ratelimit.NewPolygonLimiter("starter"), // Default to starter tier
-		wsStop:  make(chan struct{}),
 	}
 }
 
@@ -57,7 +44,6 @@ func NewClientWithTier(apiKey string, tier string) *Client {
 			Timeout: defaultTimeout,
 		},
 		limiter: ratelimit.NewPolygonLimiter(tier),
-		wsStop:  make(chan struct{}),
 	}
 }
 
@@ -225,242 +211,4 @@ func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Valu
 	}
 
 	return resp, nil
-}
-
-// StartWebSocket connects to Polygon WebSocket and subscribes to minute aggregates
-func (c *Client) StartWebSocket(ctx context.Context, symbols []string, handler func(bar models.OHLCV)) error {
-	c.wsMu.Lock()
-	defer c.wsMu.Unlock()
-
-	c.wsHandler = handler
-	c.wsSymbols = symbols
-
-	// Connect to WebSocket
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-	}
-
-	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to connect to WebSocket: %w", err)
-	}
-	c.wsConn = conn
-
-	// Authenticate
-	authMsg := WebSocketAuth{
-		Action: "auth",
-		Params: c.apiKey,
-	}
-	if err := conn.WriteJSON(authMsg); err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to authenticate: %w", err)
-	}
-
-	// Wait for auth response
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to read auth response: %w", err)
-	}
-	log.Printf("WebSocket auth response: %s", string(msg))
-
-	// Subscribe to minute aggregates for all symbols
-	// AM.* for all symbols, or AM.AAPL,AM.MSFT for specific ones
-	var subscribeParams string
-	if len(symbols) == 0 {
-		subscribeParams = "AM.*" // All symbols
-	} else {
-		for i, s := range symbols {
-			if i > 0 {
-				subscribeParams += ","
-			}
-			subscribeParams += "AM." + s
-		}
-	}
-
-	subMsg := WebSocketSubscribe{
-		Action: "subscribe",
-		Params: subscribeParams,
-	}
-	if err := conn.WriteJSON(subMsg); err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to subscribe: %w", err)
-	}
-
-	log.Printf("Subscribed to: %s", subscribeParams)
-
-	// Start reading messages in background
-	go c.readWebSocketMessages(ctx)
-
-	return nil
-}
-
-// readWebSocketMessages reads messages from the WebSocket connection
-func (c *Client) readWebSocketMessages(ctx context.Context) {
-	defer func() {
-		c.wsMu.Lock()
-		if c.wsConn != nil {
-			c.wsConn.Close()
-			c.wsConn = nil
-		}
-		c.wsMu.Unlock()
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-c.wsStop:
-			return
-		default:
-			c.wsMu.Lock()
-			conn := c.wsConn
-			c.wsMu.Unlock()
-
-			if conn == nil {
-				return
-			}
-
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-					log.Println("WebSocket closed normally")
-					return
-				}
-				log.Printf("WebSocket read error: %v", err)
-				// Attempt reconnect
-				go c.reconnectWebSocket(ctx)
-				return
-			}
-
-			// Parse message - can be array of events
-			var events []json.RawMessage
-			if err := json.Unmarshal(msg, &events); err != nil {
-				// Might be a single object (status message)
-				var status WebSocketStatus
-				if err := json.Unmarshal(msg, &status); err == nil {
-					log.Printf("WebSocket status: %s - %s", status.Status, status.Message)
-				}
-				continue
-			}
-
-			for _, eventData := range events {
-				var wsMsg WebSocketMessage
-				if err := json.Unmarshal(eventData, &wsMsg); err != nil {
-					continue
-				}
-
-				// Only process minute aggregate events
-				if wsMsg.EventType != "AM" {
-					continue
-				}
-
-				if c.wsHandler != nil {
-					bar := models.OHLCV{
-						Time:   time.UnixMilli(wsMsg.Timestamp),
-						Symbol: wsMsg.Symbol,
-						Open:   decimal.NewFromFloat(wsMsg.Open),
-						High:   decimal.NewFromFloat(wsMsg.High),
-						Low:    decimal.NewFromFloat(wsMsg.Low),
-						Close:  decimal.NewFromFloat(wsMsg.Close),
-						Volume: wsMsg.Volume,
-						VWAP:   decimal.NewFromFloat(wsMsg.VWAP),
-					}
-					c.wsHandler(bar)
-				}
-			}
-		}
-	}
-}
-
-// reconnectWebSocket attempts to reconnect to the WebSocket
-func (c *Client) reconnectWebSocket(ctx context.Context) {
-	log.Println("Attempting WebSocket reconnect...")
-
-	// Wait before reconnecting
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(5 * time.Second):
-	}
-
-	c.wsMu.Lock()
-	symbols := c.wsSymbols
-	handler := c.wsHandler
-	c.wsMu.Unlock()
-
-	if err := c.StartWebSocket(ctx, symbols, handler); err != nil {
-		log.Printf("WebSocket reconnect failed: %v", err)
-		// Try again after longer delay
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(30 * time.Second):
-			go c.reconnectWebSocket(ctx)
-		}
-	}
-}
-
-// StopWebSocket closes the WebSocket connection
-func (c *Client) StopWebSocket() {
-	close(c.wsStop)
-
-	c.wsMu.Lock()
-	defer c.wsMu.Unlock()
-
-	if c.wsConn != nil {
-		c.wsConn.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		c.wsConn.Close()
-		c.wsConn = nil
-	}
-}
-
-// UpdateSubscriptions updates the WebSocket subscriptions
-func (c *Client) UpdateSubscriptions(symbols []string) error {
-	c.wsMu.Lock()
-	defer c.wsMu.Unlock()
-
-	if c.wsConn == nil {
-		return fmt.Errorf("WebSocket not connected")
-	}
-
-	// Unsubscribe from old symbols
-	if len(c.wsSymbols) > 0 {
-		var unsubParams string
-		for i, s := range c.wsSymbols {
-			if i > 0 {
-				unsubParams += ","
-			}
-			unsubParams += "AM." + s
-		}
-		unsubMsg := WebSocketSubscribe{
-			Action: "unsubscribe",
-			Params: unsubParams,
-		}
-		if err := c.wsConn.WriteJSON(unsubMsg); err != nil {
-			return fmt.Errorf("failed to unsubscribe: %w", err)
-		}
-	}
-
-	// Subscribe to new symbols
-	var subscribeParams string
-	for i, s := range symbols {
-		if i > 0 {
-			subscribeParams += ","
-		}
-		subscribeParams += "AM." + s
-	}
-	subMsg := WebSocketSubscribe{
-		Action: "subscribe",
-		Params: subscribeParams,
-	}
-	if err := c.wsConn.WriteJSON(subMsg); err != nil {
-		return fmt.Errorf("failed to subscribe: %w", err)
-	}
-
-	c.wsSymbols = symbols
-	log.Printf("Updated subscriptions: %v", symbols)
-
-	return nil
 }
