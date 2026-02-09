@@ -81,7 +81,9 @@ func (c *Client) GetAggregates(ctx context.Context, symbol string, multiplier in
 			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
 
-		if aggResp.Status != "OK" {
+		// Accept both "OK" and "DELAYED" as valid statuses
+		// "DELAYED" is returned by free tier for recent data
+		if aggResp.Status != "OK" && aggResp.Status != "DELAYED" {
 			return nil, fmt.Errorf("API error: %s", aggResp.Status)
 		}
 
