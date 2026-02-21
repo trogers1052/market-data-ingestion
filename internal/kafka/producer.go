@@ -52,6 +52,10 @@ func NewProducer(brokers []string, topic string, enabled bool) (*Producer, error
 	config.Producer.RequiredAcks = sarama.WaitForLocal // Wait for leader acknowledgment
 	config.Producer.Retry.Max = 3
 	config.Producer.Compression = sarama.CompressionSnappy
+	config.Net.DialTimeout = 10 * time.Second
+	config.Net.ReadTimeout = 10 * time.Second
+	config.Net.WriteTimeout = 10 * time.Second
+	config.Producer.Timeout = 10 * time.Second
 
 	producer, err := sarama.NewSyncProducer(brokers, config)
 	if err != nil {

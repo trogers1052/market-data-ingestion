@@ -27,6 +27,10 @@ func NewStockServiceDB(dsn string) (*StockServiceDB, error) {
 		return nil, fmt.Errorf("failed to open stock-service database: %w", err)
 	}
 
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
 	// Test connection
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping stock-service database: %w", err)

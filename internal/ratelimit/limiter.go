@@ -59,7 +59,14 @@ func (l *Limiter) Wait(ctx context.Context) error {
 		return ctx.Err()
 	case <-time.After(waitTime):
 		l.mu.Lock()
-		l.tokens-- // Consume the token we waited for
+		now = time.Now()
+		elapsed = now.Sub(l.lastUpdate).Seconds()
+		l.tokens += elapsed * l.rate
+		if l.tokens > float64(l.burst) {
+			l.tokens = float64(l.burst)
+		}
+		l.lastUpdate = now
+		l.tokens--
 		l.mu.Unlock()
 		return nil
 	}

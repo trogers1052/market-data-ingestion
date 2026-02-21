@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/IBM/sarama"
 )
@@ -60,6 +61,11 @@ func NewWatchlistConsumer(brokers []string, topic, groupID string, handler Symbo
 	config.Version = sarama.V2_8_0_0
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	config.Net.DialTimeout = 10 * time.Second
+	config.Net.ReadTimeout = 10 * time.Second
+	config.Net.WriteTimeout = 10 * time.Second
+	config.Consumer.Group.Session.Timeout = 30 * time.Second
+	config.Consumer.Group.Heartbeat.Interval = 10 * time.Second
 
 	consumer, err := sarama.NewConsumerGroup(brokers, groupID, config)
 	if err != nil {

@@ -51,12 +51,20 @@ func main() {
 	if healthPort == "" {
 		healthPort = "8080"
 	}
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	healthMux := http.NewServeMux()
+	healthMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok")) //nolint:errcheck
 	})
+	healthServer := &http.Server{
+		Addr:         ":" + healthPort,
+		Handler:      healthMux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}
 	go func() {
-		if err := http.ListenAndServe(":"+healthPort, nil); err != nil {
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("Health server error: %v", err)
 		}
 	}()

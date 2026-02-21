@@ -69,9 +69,9 @@ func (c *Client) GetAggregates(ctx context.Context, symbol string, multiplier in
 		if err != nil {
 			return nil, fmt.Errorf("failed to get aggregates: %w", err)
 		}
-		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read response: %w", err)
 		}

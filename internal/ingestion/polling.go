@@ -202,7 +202,7 @@ func (s *PollingService) pollSymbol(ctx context.Context, symbol string) (fetched
 	// Filter out bars we've already processed
 	var newBars []models.OHLCV
 	s.lastFetchedMu.Lock()
-	lastTime = s.lastFetched[symbol]
+	lastTime, exists = s.lastFetched[symbol]
 	for _, bar := range bars {
 		if !exists || bar.Time.After(lastTime) {
 			newBars = append(newBars, bar)
