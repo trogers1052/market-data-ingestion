@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -379,8 +380,13 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
+	// WaitGroup to track background goroutines
+	var wg sync.WaitGroup
+
 	// Run initial backfill for any symbols that need it
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		log.Println("Checking for symbols needing backfill...")
 		if err := backfillService.BackfillAll(ctx); err != nil {
 			log.Printf("Initial backfill had errors: %v", err)
@@ -389,14 +395,18 @@ func main() {
 
 	// Start watchlist consumer if available
 	if watchlistSyncService != nil {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			if err := watchlistSyncService.StartConsumer(ctx); err != nil {
 				log.Printf("Watchlist consumer error: %v", err)
 			}
 		}()
 
 		// Process backfill requests for newly added symbols
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for symbol := range watchlistSyncService.BackfillChannel() {
 				log.Printf("Processing backfill for new symbol: %s", symbol)
 				if err := backfillService.BackfillSymbols(ctx, []string{symbol}); err != nil {
@@ -407,8 +417,10 @@ func main() {
 	}
 
 	// Start polling service in background
+	wg.Add(1)
 	errCh := make(chan error, 1)
 	go func() {
+		defer wg.Done()
 		errCh <- pollingService.Start(ctx)
 	}()
 
@@ -427,16 +439,48 @@ func main() {
 		}
 	}
 
-	// Graceful shutdown
-	log.Println("Shutting down...")
+	// Stop accepting new OS signals
+	signal.Stop(quit)
+
+	// Graceful shutdown with timeout to prevent hanging forever
+	const shutdownTimeout = 15 * time.Second
+	log.Printf("Shutting down (timeout: %v)...", shutdownTimeout)
+
+	// Cancel context to signal all goroutines to stop
 	cancel()
 
+	// Stop polling service (logs final stats)
 	pollingService.Stop()
 
+	// Close watchlist sync (closes backfill channel, which unblocks the
+	// backfill-processor goroutine's range loop)
 	if watchlistSyncService != nil {
 		watchlistSyncService.Close()
 	}
 
+	// Shut down health server gracefully
+	healthCtx, healthCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer healthCancel()
+	if err := healthServer.Shutdown(healthCtx); err != nil {
+		log.Printf("Health server shutdown error: %v", err)
+	}
+
+	// Wait for all background goroutines to finish, with a hard deadline
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Println("All goroutines stopped cleanly")
+	case <-time.After(shutdownTimeout):
+		log.Println("WARNING: Shutdown timed out, some goroutines may still be running")
+	}
+
+	// Deferred cleanup runs after this: statusManager.Stop(), kafkaProducer.Close(),
+	// redisClient.Close(), repo.Close()
 	log.Println("Service stopped")
 }
 

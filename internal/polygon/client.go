@@ -65,15 +65,9 @@ func (c *Client) GetAggregates(ctx context.Context, symbol string, multiplier in
 	var allBars []models.OHLCV
 
 	for {
-		resp, err := c.doRequest(ctx, endpoint, params)
+		body, err := c.doRequest(ctx, endpoint, params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get aggregates: %w", err)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 
 		var aggResp AggregatesResponse
@@ -133,15 +127,9 @@ func (c *Client) GetDailyBars(ctx context.Context, symbol string, from, to time.
 func (c *Client) GetTickerDetails(ctx context.Context, symbol string) (*TickerDetails, error) {
 	endpoint := fmt.Sprintf("/v3/reference/tickers/%s", symbol)
 
-	resp, err := c.doRequest(ctx, endpoint, nil)
+	body, err := c.doRequest(ctx, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ticker details: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var detailsResp TickerDetailsResponse
@@ -156,15 +144,9 @@ func (c *Client) GetTickerDetails(ctx context.Context, symbol string) (*TickerDe
 func (c *Client) GetMarketStatus(ctx context.Context) (*MarketStatus, error) {
 	endpoint := "/v1/marketstatus/now"
 
-	resp, err := c.doRequest(ctx, endpoint, nil)
+	body, err := c.doRequest(ctx, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get market status: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	var status MarketStatus
@@ -175,9 +157,10 @@ func (c *Client) GetMarketStatus(ctx context.Context) (*MarketStatus, error) {
 	return &status, nil
 }
 
-// doRequest makes an authenticated HTTP request to the Polygon API
-// It automatically handles rate limiting
-func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Values) (*http.Response, error) {
+// doRequest makes an authenticated HTTP request to the Polygon API.
+// It automatically handles rate limiting, retries on 429, and body lifecycle.
+// Returns the response body bytes; the caller never touches resp.Body directly.
+func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
 	if params == nil {
 		params = url.Values{}
 	}
@@ -201,8 +184,12 @@ func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Valu
 			return nil, err
 		}
 
+		// Always read and close the body to prevent resource leaks and
+		// allow HTTP connection reuse.
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
 		if resp.StatusCode == 429 {
-			resp.Body.Close()
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -211,7 +198,15 @@ func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Valu
 			continue
 		}
 
-		return resp, nil
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		}
+
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read response body: %w", readErr)
+		}
+
+		return body, nil
 	}
 
 	return nil, fmt.Errorf("exceeded max retries (%d) on rate limit", maxRetries)
