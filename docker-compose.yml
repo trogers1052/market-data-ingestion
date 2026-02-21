@@ -1,0 +1,54 @@
+services:
+  market-data-ingestion:
+    image: ghcr.io/trogers1052/market-data-ingestion:latest
+    container_name: market-data-ingestion
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Alpaca API (free IEX feed — real-time, no delay)
+      ALPACA_API_KEY_ID: ${ALPACA_API_KEY_ID}
+      ALPACA_API_SECRET_KEY: ${ALPACA_API_SECRET_KEY}
+
+      # Database (TimescaleDB on the Pi)
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: trader
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: market_data
+
+      # Kafka (Redpanda on the Pi)
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_QUOTES_TOPIC: stock.quotes.realtime
+      KAFKA_ENABLED: "true"
+
+      # Kafka watchlist consumer
+      KAFKA_WATCHLIST_TOPIC: trading.watchlist
+      KAFKA_CONSUMER_GROUP: market-data-ingestion
+      WATCHLIST_SYNC_ENABLED: "true"
+
+      # Redis on the Pi
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+
+      # Ingestion settings — real-time feed, no delay needed
+      POLL_INTERVAL_SECONDS: "60"
+      BACKFILL_MONTHS: "60"
+      BACKFILL_DELAY_DAYS: "0"
+      POLLING_DELAY_MINUTES: "0"
+
+      # Market hours (ET)
+      MARKET_OPEN_HOUR: "4"
+      MARKET_CLOSE_HOUR: "20"
+      ENABLE_PRE_MARKET: "true"
+      ENABLE_AFTER_HOURS: "true"
+
+    networks:
+      - trading-network
+
+networks:
+  trading-network:
+    external: true
+    name: trading-network

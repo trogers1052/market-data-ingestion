@@ -8,7 +8,7 @@ import (
 
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/ingestion"
-	"github.com/trogers1052/market-data-ingestion/internal/polygon"
+	"github.com/trogers1052/market-data-ingestion/internal/marketdata"
 )
 
 // Gap is an alias for database.Gap
@@ -16,14 +16,14 @@ type Gap = database.Gap
 
 // DataQualityReport contains the results of a data quality check
 type DataQualityReport struct {
-	Symbol         string
-	CheckedAt      time.Time
-	TotalBars      int64
-	ExpectedBars   int64
+	Symbol          string
+	CheckedAt       time.Time
+	TotalBars       int64
+	ExpectedBars    int64
 	CoveragePercent float64
-	Gaps           []Gap
-	Anomalies      []Anomaly
-	DataRange      *DataRange
+	Gaps            []Gap
+	Anomalies       []Anomaly
+	DataRange       *DataRange
 }
 
 // DataRange represents the time range of available data
@@ -41,17 +41,17 @@ type Anomaly struct {
 
 // Checker performs data quality checks
 type Checker struct {
-	repo          *database.Repository
-	polygonClient *polygon.Client
-	scheduler     *ingestion.MarketScheduler
+	repo      *database.Repository
+	mdClient  marketdata.Client
+	scheduler *ingestion.MarketScheduler
 }
 
 // NewChecker creates a new data quality checker
-func NewChecker(repo *database.Repository, polygonClient *polygon.Client, scheduler *ingestion.MarketScheduler) *Checker {
+func NewChecker(repo *database.Repository, mdClient marketdata.Client, scheduler *ingestion.MarketScheduler) *Checker {
 	return &Checker{
-		repo:          repo,
-		polygonClient: polygonClient,
-		scheduler:     scheduler,
+		repo:      repo,
+		mdClient:  mdClient,
+		scheduler: scheduler,
 	}
 }
 
@@ -184,7 +184,7 @@ func (c *Checker) FillGaps(ctx context.Context, symbol string, gaps []Gap) (int,
 		log.Printf("Filling gap for %s: %s to %s",
 			symbol, gap.StartTime.Format(time.RFC3339), gap.EndTime.Format(time.RFC3339))
 
-		bars, err := c.polygonClient.GetMinuteBars(ctx, symbol, gap.StartTime, gap.EndTime)
+		bars, err := c.mdClient.GetMinuteBars(ctx, symbol, gap.StartTime, gap.EndTime)
 		if err != nil {
 			log.Printf("Warning: failed to fetch data for gap: %v", err)
 			continue

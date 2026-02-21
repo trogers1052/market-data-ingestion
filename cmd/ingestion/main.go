@@ -16,11 +16,11 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/joho/godotenv"
+	"github.com/trogers1052/market-data-ingestion/internal/alpaca"
 	"github.com/trogers1052/market-data-ingestion/internal/config"
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/ingestion"
 	"github.com/trogers1052/market-data-ingestion/internal/kafka"
-	"github.com/trogers1052/market-data-ingestion/internal/polygon"
 	"github.com/trogers1052/market-data-ingestion/internal/quality"
 	redisclient "github.com/trogers1052/market-data-ingestion/internal/redis"
 	"github.com/trogers1052/market-data-ingestion/internal/status"
@@ -84,9 +84,9 @@ func main() {
 
 	log.Printf("Database: %s:%d/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
 	log.Printf("Backfill months: %d", cfg.BackfillMonths)
-	log.Printf("Backfill delay days: %d (excludes recent data from REST API for delayed subscriptions)", cfg.BackfillDelayDays)
+	log.Printf("Backfill delay days: %d", cfg.BackfillDelayDays)
 	log.Printf("Market hours: %d:00 - %d:00 ET", cfg.MarketOpenHour, cfg.MarketCloseHour)
-	log.Printf("Data mode: REST API polling (every %ds, %d-min delay)",
+	log.Printf("Data mode: REST API polling (every %ds, delay: %d min)",
 		cfg.PollIntervalSeconds, cfg.PollingDelayMinutes)
 
 	// Connect to database
@@ -102,9 +102,9 @@ func main() {
 		log.Fatalf("Failed to run database migrations: %v", err)
 	}
 
-	// Create Polygon client
-	polygonClient := polygon.NewClient(cfg.PolygonAPIKey)
-	log.Println("Polygon.io client initialized")
+	// Create Alpaca client (free IEX feed — real-time, no delay)
+	alpacaClient := alpaca.NewClient(cfg.AlpacaKeyID, cfg.AlpacaSecretKey)
+	log.Println("Alpaca client initialized (IEX feed)")
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -146,8 +146,8 @@ func main() {
 			name = parts[1]
 		}
 
-		// Fetch ticker details from Polygon
-		details, err := polygonClient.GetTickerDetails(ctx, symbol)
+		// Fetch ticker details from Alpaca
+		details, err := alpacaClient.GetTickerDetails(ctx, symbol)
 		if err != nil {
 			log.Printf("Warning: could not fetch ticker details: %v", err)
 		} else if details.Name != "" {
@@ -204,7 +204,7 @@ func main() {
 	// Handle quality check command
 	if *qualityCheck {
 		log.Printf("Running data quality check (last %d days)", *days)
-		checker := quality.NewChecker(repo, polygonClient, scheduler)
+		checker := quality.NewChecker(repo, alpacaClient, scheduler)
 
 		to := time.Now()
 		from := to.AddDate(0, 0, -*days)
@@ -241,7 +241,7 @@ func main() {
 	// Handle fill-gaps command
 	if *fillGaps {
 		log.Printf("Detecting and filling gaps (last %d days)", *days)
-		checker := quality.NewChecker(repo, polygonClient, scheduler)
+		checker := quality.NewChecker(repo, alpacaClient, scheduler)
 
 		to := time.Now()
 		from := to.AddDate(0, 0, -*days)
@@ -287,7 +287,7 @@ func main() {
 		log.Println("Watchlist sync enabled...")
 
 		// Create watchlist sync service
-		watchlistSyncService = watchlist.NewSyncService(repo, redisClient, polygonClient)
+		watchlistSyncService = watchlist.NewSyncService(repo, redisClient, alpacaClient)
 
 		// Create Kafka consumer
 		consumer, err := kafka.NewWatchlistConsumer(
@@ -326,7 +326,7 @@ func main() {
 	// Create backfill service
 	// BackfillDelayDays=1 means exclude today's data from REST API backfill (for delayed Polygon subscriptions)
 	// WebSocket handles today's data with 15-minute delay
-	backfillService := ingestion.NewBackfillService(polygonClient, repo, cfg.BackfillMonths, kafkaProducer, cfg.BackfillDelayDays)
+	backfillService := ingestion.NewBackfillService(alpacaClient, repo, cfg.BackfillMonths, kafkaProducer, cfg.BackfillDelayDays)
 
 	// Handle backfill-only mode
 	if *backfillOnly {
@@ -358,7 +358,7 @@ func main() {
 
 	// Create polling service for REST API data ingestion
 	pollingService := ingestion.NewPollingService(
-		polygonClient,
+		alpacaClient,
 		repo,
 		scheduler,
 		kafkaProducer,
@@ -425,8 +425,7 @@ func main() {
 	}()
 
 	log.Println("========================================")
-	log.Printf("Service started (%d-min delay). Press Ctrl+C to stop.",
-		cfg.PollingDelayMinutes)
+	log.Println("Service started (Alpaca IEX real-time feed). Press Ctrl+C to stop.")
 	log.Println("========================================")
 
 	// Wait for shutdown signal or error

@@ -9,8 +9,9 @@ import (
 
 // Config holds all configuration for the market data ingestion service
 type Config struct {
-	// Polygon.io API
-	PolygonAPIKey string
+	// Alpaca API (free IEX feed — real-time, no delay)
+	AlpacaKeyID     string
+	AlpacaSecretKey string
 
 	// Database (TimescaleDB)
 	DBHost     string
@@ -52,8 +53,9 @@ type Config struct {
 // Load loads configuration from environment variables
 func Load() (*Config, error) {
 	cfg := &Config{
-		// Polygon.io
-		PolygonAPIKey: getEnv("POLYGON_API_KEY", ""),
+		// Alpaca (free IEX feed, real-time)
+		AlpacaKeyID:     getEnv("ALPACA_API_KEY_ID", ""),
+		AlpacaSecretKey: getEnv("ALPACA_API_SECRET_KEY", ""),
 
 		// Database
 		DBHost:     getEnv("DB_HOST", "localhost"),
@@ -82,19 +84,22 @@ func Load() (*Config, error) {
 		// Ingestion
 		PollIntervalSeconds: getEnvInt("POLL_INTERVAL_SECONDS", 60),
 		BackfillMonths:      getEnvInt("BACKFILL_MONTHS", 60),
-		BackfillDelayDays:   getEnvInt("BACKFILL_DELAY_DAYS", 1), // 1 = exclude today (for delayed subscriptions)
+		BackfillDelayDays:   getEnvInt("BACKFILL_DELAY_DAYS", 0), // 0 = include today (Alpaca IEX is real-time)
 		MarketOpenHour:      getEnvInt("MARKET_OPEN_HOUR", 4),    // 4am ET (pre-market)
 		MarketCloseHour:     getEnvInt("MARKET_CLOSE_HOUR", 20),  // 8pm ET (after-hours)
 		EnablePreMarket:     getEnvBool("ENABLE_PRE_MARKET", true),
 		EnableAfterHours:    getEnvBool("ENABLE_AFTER_HOURS", true),
 
 		// Polling settings
-		PollingDelayMinutes: getEnvInt("POLLING_DELAY_MINUTES", 15), // 15-min delay for delayed subscriptions
+		PollingDelayMinutes: getEnvInt("POLLING_DELAY_MINUTES", 0), // 0 = real-time (Alpaca IEX feed)
 	}
 
 	// Validate required fields
-	if cfg.PolygonAPIKey == "" {
-		return nil, fmt.Errorf("POLYGON_API_KEY is required")
+	if cfg.AlpacaKeyID == "" {
+		return nil, fmt.Errorf("ALPACA_API_KEY_ID is required")
+	}
+	if cfg.AlpacaSecretKey == "" {
+		return nil, fmt.Errorf("ALPACA_API_SECRET_KEY is required")
 	}
 
 	return cfg, nil

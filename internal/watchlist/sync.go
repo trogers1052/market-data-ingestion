@@ -6,30 +6,30 @@ import (
 
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/kafka"
-	"github.com/trogers1052/market-data-ingestion/internal/polygon"
+	"github.com/trogers1052/market-data-ingestion/internal/marketdata"
 	redisclient "github.com/trogers1052/market-data-ingestion/internal/redis"
 )
 
 // SyncService handles watchlist synchronization between Redis, Kafka, and the database
 type SyncService struct {
-	repo          *database.Repository
-	redisClient   *redisclient.Client
-	polygonClient *polygon.Client
-	consumer      *kafka.WatchlistConsumer
-	backfillCh    chan string // Channel to trigger backfill for new symbols
+	repo        *database.Repository
+	redisClient *redisclient.Client
+	mdClient    marketdata.Client
+	consumer    *kafka.WatchlistConsumer
+	backfillCh  chan string // Channel to trigger backfill for new symbols
 }
 
 // NewSyncService creates a new watchlist sync service
 func NewSyncService(
 	repo *database.Repository,
 	redisClient *redisclient.Client,
-	polygonClient *polygon.Client,
+	mdClient marketdata.Client,
 ) *SyncService {
 	return &SyncService{
-		repo:          repo,
-		redisClient:   redisClient,
-		polygonClient: polygonClient,
-		backfillCh:    make(chan string, 100),
+		repo:        repo,
+		redisClient: redisClient,
+		mdClient:    mdClient,
+		backfillCh:  make(chan string, 100),
 	}
 }
 
@@ -87,7 +87,7 @@ func (s *SyncService) SyncFromRedis(ctx context.Context) ([]string, error) {
 
 			// Try to get name from Polygon if not in Redis
 			if name == symbol {
-				if tickerDetails, err := s.polygonClient.GetTickerDetails(ctx, symbol); err == nil && tickerDetails.Name != "" {
+				if tickerDetails, err := s.mdClient.GetTickerDetails(ctx, symbol); err == nil && tickerDetails.Name != "" {
 					name = tickerDetails.Name
 				}
 			}
@@ -124,7 +124,7 @@ func (s *SyncService) OnSymbolAdded(ctx context.Context, symbol, name string) er
 
 	// Try to get better name from Polygon if the name is just the symbol
 	if name == symbol || name == "" {
-		if details, err := s.polygonClient.GetTickerDetails(ctx, symbol); err == nil && details.Name != "" {
+		if details, err := s.mdClient.GetTickerDetails(ctx, symbol); err == nil && details.Name != "" {
 			name = details.Name
 		}
 	}

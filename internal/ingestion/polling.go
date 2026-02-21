@@ -8,14 +8,13 @@ import (
 
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/kafka"
+	"github.com/trogers1052/market-data-ingestion/internal/marketdata"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
-	"github.com/trogers1052/market-data-ingestion/internal/polygon"
 )
 
 // PollingService handles market data ingestion via REST API polling
-// This is designed for delayed Polygon subscriptions that don't support WebSocket
 type PollingService struct {
-	polygonClient *polygon.Client
+	mdClient marketdata.Client
 	repo          *database.Repository
 	scheduler     *MarketScheduler
 	kafkaProducer *kafka.Producer
@@ -37,7 +36,7 @@ type PollingService struct {
 
 // NewPollingService creates a new REST API polling service
 func NewPollingService(
-	polygonClient *polygon.Client,
+	mdClient marketdata.Client,
 	repo *database.Repository,
 	scheduler *MarketScheduler,
 	kafkaProducer *kafka.Producer,
@@ -45,7 +44,7 @@ func NewPollingService(
 	delayMinutes int,
 ) *PollingService {
 	return &PollingService{
-		polygonClient: polygonClient,
+		mdClient: mdClient,
 		repo:          repo,
 		scheduler:     scheduler,
 		kafkaProducer: kafkaProducer,
@@ -189,8 +188,8 @@ func (s *PollingService) pollSymbol(ctx context.Context, symbol string) (fetched
 	}
 	s.lastFetchedMu.Unlock()
 
-	// Fetch bars from Polygon REST API
-	bars, err := s.polygonClient.GetMinuteBars(ctx, symbol, windowStart, windowEnd)
+	// Fetch bars from market data provider
+	bars, err := s.mdClient.GetMinuteBars(ctx, symbol, windowStart, windowEnd)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -229,7 +228,7 @@ func (s *PollingService) pollSymbol(ctx context.Context, symbol string) (fetched
 
 	// Publish to Kafka
 	if s.kafkaProducer != nil {
-		if err := s.kafkaProducer.PublishQuotesBatch(ctx, newBars); err != nil {
+		if err := s.kafkaProducer.PublishQuotesBatch(ctx, newBars, false); err != nil {
 			log.Printf("Warning: failed to publish %s bars to Kafka: %v", symbol, err)
 		}
 	}

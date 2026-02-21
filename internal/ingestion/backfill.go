@@ -8,28 +8,27 @@ import (
 
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/kafka"
+	"github.com/trogers1052/market-data-ingestion/internal/marketdata"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
-	"github.com/trogers1052/market-data-ingestion/internal/polygon"
 )
 
-// BackfillService handles historical data backfill from Polygon.io
+// BackfillService handles historical data backfill
 type BackfillService struct {
-	polygonClient *polygon.Client
+	mdClient marketdata.Client
 	repo          *database.Repository
 	months        int
 	kafkaProducer *kafka.Producer
 	delayDays     int // Number of days to exclude from REST API backfill (for delayed subscriptions)
 }
 
-// NewBackfillService creates a new backfill service
-// delayDays should be set to 1 for delayed Polygon.io subscriptions (15-min delayed data)
-// This prevents the DELAYED API error by only fetching data up to T-1
-func NewBackfillService(polygonClient *polygon.Client, repo *database.Repository, months int, kafkaProducer *kafka.Producer, delayDays int) *BackfillService {
+// NewBackfillService creates a new backfill service.
+// delayDays should be 0 for real-time providers (Alpaca IEX) or 1 for delayed feeds.
+func NewBackfillService(mdClient marketdata.Client, repo *database.Repository, months int, kafkaProducer *kafka.Producer, delayDays int) *BackfillService {
 	if delayDays < 0 {
 		delayDays = 0
 	}
 	return &BackfillService{
-		polygonClient: polygonClient,
+		mdClient: mdClient,
 		repo:          repo,
 		months:        months,
 		kafkaProducer: kafkaProducer,
@@ -157,7 +156,7 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 			currentStart.Format("2006-01-02"),
 			currentEnd.Format("2006-01-02"))
 
-		bars, err := s.polygonClient.GetMinuteBars(ctx, symbol, currentStart, currentEnd)
+		bars, err := s.mdClient.GetMinuteBars(ctx, symbol, currentStart, currentEnd)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to fetch data: %v", err)
 			log.Printf("[%s] Error: %s", symbol, errMsg)
@@ -184,7 +183,7 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 
 			// Publish to Kafka (non-blocking, log errors but don't fail)
 			if s.kafkaProducer != nil {
-				if err := s.kafkaProducer.PublishQuotesBatch(ctx, bars); err != nil {
+				if err := s.kafkaProducer.PublishQuotesBatch(ctx, bars, true); err != nil {
 					log.Printf("[%s] Warning: failed to publish bars to Kafka: %v", symbol, err)
 					// Don't fail the whole operation if Kafka fails
 				}
@@ -310,7 +309,7 @@ func (s *BackfillService) FillGaps(ctx context.Context, symbol string) error {
 			targetStart.Format("2006-01-02"),
 			minTime.Format("2006-01-02"))
 
-		bars, err := s.polygonClient.GetMinuteBars(ctx, symbol, targetStart, *minTime)
+		bars, err := s.mdClient.GetMinuteBars(ctx, symbol, targetStart, *minTime)
 		if err != nil {
 			return fmt.Errorf("failed to fetch gap data: %w", err)
 		}
@@ -333,7 +332,7 @@ func (s *BackfillService) FillGaps(ctx context.Context, symbol string) error {
 			maxTime.Format("2006-01-02"),
 			cutoffDate.Format("2006-01-02"))
 
-		bars, err := s.polygonClient.GetMinuteBars(ctx, symbol, *maxTime, cutoffDate)
+		bars, err := s.mdClient.GetMinuteBars(ctx, symbol, *maxTime, cutoffDate)
 		if err != nil {
 			return fmt.Errorf("failed to fetch recent data: %w", err)
 		}
