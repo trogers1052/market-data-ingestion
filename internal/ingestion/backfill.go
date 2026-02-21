@@ -47,6 +47,10 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 	minTime, maxTime, err := s.repo.GetDataRange(ctx, symbol)
 	if err != nil {
 		log.Printf("[%s] ERROR: failed to get existing data range: %v", symbol, err)
+		// Abort rather than treating the failure as "no data" — fetching the
+		// full range when partial data already exists would waste Polygon API
+		// quota and could create duplicate rows.
+		return fmt.Errorf("cannot determine existing data range for %s: %w", symbol, err)
 	}
 
 	// Also get bar count for debugging
