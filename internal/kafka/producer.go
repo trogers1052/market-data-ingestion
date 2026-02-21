@@ -17,6 +17,7 @@ type QuoteEvent struct {
 	Source        string         `json:"source"`
 	Timestamp     string         `json:"timestamp"`
 	SchemaVersion string         `json:"schema_version"`
+	IsBackfill    bool           `json:"is_backfill"`
 	Data          QuoteEventData `json:"data"`
 }
 
@@ -71,7 +72,7 @@ func NewProducer(brokers []string, topic string, enabled bool) (*Producer, error
 }
 
 // PublishQuote publishes a single quote event to Kafka
-func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV) error {
+func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfill bool) error {
 	if !p.enabled {
 		return nil // Silently skip if disabled
 	}
@@ -81,6 +82,7 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV) error {
 		Source:        "polygon",
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		SchemaVersion: "1.0",
+		IsBackfill:    isBackfill,
 		Data: QuoteEventData{
 			Symbol:     bar.Symbol,
 			Time:       bar.Time,
@@ -133,7 +135,7 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV) error {
 }
 
 // PublishQuotesBatch publishes multiple quote events in a batch
-func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV) error {
+func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV, isBackfill bool) error {
 	if !p.enabled {
 		return nil // Silently skip if disabled
 	}
@@ -149,6 +151,7 @@ func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV) 
 			Source:        "polygon",
 			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			SchemaVersion: "1.0",
+			IsBackfill:    isBackfill,
 			Data: QuoteEventData{
 				Symbol:     bar.Symbol,
 				Time:       bar.Time,
