@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
 	_ "github.com/lib/pq"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
@@ -160,7 +161,7 @@ func (r *Repository) GetOHLCV(ctx context.Context, symbol string, from, to time.
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 		if vwap.Valid {
-			bar.VWAP = bar.VWAP // Already scanned
+			bar.VWAP = decimal.NewFromFloat(vwap.Float64)
 		}
 		if tradeCount.Valid {
 			bar.TradeCount = int(tradeCount.Float64)

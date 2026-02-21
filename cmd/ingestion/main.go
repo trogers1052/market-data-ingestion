@@ -267,7 +267,8 @@ func main() {
 	if err != nil {
 		log.Printf("Warning: Failed to connect to Redis: %v", err)
 		log.Println("Continuing without Redis features...")
-	} else {
+	}
+	if redisClient != nil {
 		defer redisClient.Close()
 	}
 

@@ -178,11 +178,6 @@ func (c *Client) GetMarketStatus(ctx context.Context) (*MarketStatus, error) {
 // doRequest makes an authenticated HTTP request to the Polygon API
 // It automatically handles rate limiting
 func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Values) (*http.Response, error) {
-	// Wait for rate limiter
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("rate limiter: %w", err)
-	}
-
 	if params == nil {
 		params = url.Values{}
 	}
@@ -190,27 +185,34 @@ func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Valu
 
 	reqURL := fmt.Sprintf("%s%s?%s", baseURL, endpoint, params.Encode())
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle rate limit responses
-	if resp.StatusCode == 429 {
-		resp.Body.Close()
-		// Wait longer and retry once
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(60 * time.Second):
+	const maxRetries = 5
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("rate limiter: %w", err)
 		}
-		return c.doRequest(ctx, endpoint, params)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode == 429 {
+			resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(60 * time.Second):
+			}
+			continue
+		}
+
+		return resp, nil
 	}
 
-	return resp, nil
+	return nil, fmt.Errorf("exceeded max retries (%d) on rate limit", maxRetries)
 }
