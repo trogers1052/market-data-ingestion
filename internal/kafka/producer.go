@@ -128,8 +128,10 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfil
 		return fmt.Errorf("failed to send message to Kafka: %w", err)
 	}
 
-	log.Printf("Published quote event: %s @ %s to %s[%d:%d]",
-		bar.Symbol, bar.Time.Format("15:04:05"), p.topic, partition, offset)
+	// Per-quote publish log intentionally omitted to avoid flooding during market hours.
+	// Batch publishes are logged in PublishQuotesBatch.
+	_ = partition
+	_ = offset
 
 	return nil
 }

@@ -17,6 +17,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build \
     -ldflags="-s -w" \
     -o /market-data-ingestion \
     ./cmd/ingestion
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /healthcheck \
+    ./cmd/healthcheck
 
 # Run stage
 FROM gcr.io/distroless/static-debian12
@@ -26,6 +31,7 @@ COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 COPY --from=builder /market-data-ingestion /market-data-ingestion
+COPY --from=builder /healthcheck /healthcheck
 
 # Copy migrations directory
 COPY --from=builder /app/db/migrations /db/migrations

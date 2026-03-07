@@ -29,6 +29,8 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	// Parse command line flags
 	backfillOnly := flag.Bool("backfill", false, "Run backfill only and exit")
 	backfillSymbols := flag.String("symbols", "", "Comma-separated list of symbols (for -backfill, -quality, -fill-gaps)")
@@ -424,9 +426,13 @@ func main() {
 		errCh <- pollingService.Start(ctx)
 	}()
 
-	log.Println("========================================")
-	log.Println("Service started (Alpaca IEX real-time feed). Press Ctrl+C to stop.")
-	log.Println("========================================")
+	// Log monitored symbol count at startup for flow visibility
+	startupSymbols, _ := repo.GetMonitoredSymbols(ctx)
+	log.Printf("========================================")
+	log.Printf("Service started (Alpaca IEX real-time feed)")
+	log.Printf("Monitoring %d symbols, polling every %ds", len(startupSymbols), cfg.PollIntervalSeconds)
+	log.Printf("Kafka: %v, topic: %s", cfg.KafkaEnabled, cfg.KafkaQuotesTopic)
+	log.Printf("========================================")
 
 	// Wait for shutdown signal or error
 	select {
