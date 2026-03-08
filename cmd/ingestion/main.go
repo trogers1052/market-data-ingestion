@@ -73,6 +73,9 @@ func main() {
 	}()
 	log.Printf("Health endpoint: http://localhost:%s/health", healthPort)
 
+	// Metrics endpoint — Prometheus scrape target
+	startMetricsServer()
+
 	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
