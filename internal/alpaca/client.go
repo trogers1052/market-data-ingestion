@@ -1,6 +1,7 @@
 package alpaca
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -98,7 +99,9 @@ func (c *Client) getBars(ctx context.Context, symbol string, timeframe string, f
 		}
 
 		var resp BarsResponse
-		if err := json.Unmarshal(body, &resp); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(body))
+		dec.UseNumber()
+		if err := dec.Decode(&resp); err != nil {
 			return nil, fmt.Errorf("failed to parse bars response for %s: %w", symbol, err)
 		}
 
@@ -107,15 +110,21 @@ func (c *Client) getBars(ctx context.Context, symbol string, timeframe string, f
 			if err != nil {
 				continue
 			}
+			open, _ := decimal.NewFromString(bar.Open.String())
+			high, _ := decimal.NewFromString(bar.High.String())
+			low, _ := decimal.NewFromString(bar.Low.String())
+			cls, _ := decimal.NewFromString(bar.Close.String())
+			vwap, _ := decimal.NewFromString(bar.VWAP.String())
+			vol, _ := bar.Volume.Int64()
 			allBars = append(allBars, models.OHLCV{
 				Time:       ts,
 				Symbol:     symbol,
-				Open:       decimal.NewFromFloat(bar.Open),
-				High:       decimal.NewFromFloat(bar.High),
-				Low:        decimal.NewFromFloat(bar.Low),
-				Close:      decimal.NewFromFloat(bar.Close),
-				Volume:     int64(bar.Volume),
-				VWAP:       decimal.NewFromFloat(bar.VWAP),
+				Open:       open,
+				High:       high,
+				Low:        low,
+				Close:      cls,
+				Volume:     vol,
+				VWAP:       vwap,
 				TradeCount: bar.TradeCount,
 			})
 		}

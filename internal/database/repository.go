@@ -154,17 +154,18 @@ func (r *Repository) GetOHLCV(ctx context.Context, symbol string, from, to time.
 	var bars []models.OHLCV
 	for rows.Next() {
 		var bar models.OHLCV
-		var vwap, tradeCount sql.NullFloat64
+		var vwap sql.NullString
+		var tradeCount sql.NullInt32
 		err := rows.Scan(&bar.Time, &bar.Symbol, &bar.Open, &bar.High, &bar.Low,
 			&bar.Close, &bar.Volume, &vwap, &tradeCount)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 		if vwap.Valid {
-			bar.VWAP = decimal.NewFromFloat(vwap.Float64)
+			bar.VWAP, _ = decimal.NewFromString(vwap.String)
 		}
 		if tradeCount.Valid {
-			bar.TradeCount = int(tradeCount.Float64)
+			bar.TradeCount = int(tradeCount.Int32)
 		}
 		bars = append(bars, bar)
 	}
@@ -183,7 +184,7 @@ func (r *Repository) GetLatestBar(ctx context.Context, symbol string) (*models.O
 	`
 
 	var bar models.OHLCV
-	var vwap sql.NullFloat64
+	var vwap sql.NullString
 	var tradeCount sql.NullInt32
 
 	err := r.db.QueryRowContext(ctx, query, symbol).Scan(
@@ -197,6 +198,9 @@ func (r *Repository) GetLatestBar(ctx context.Context, symbol string) (*models.O
 		return nil, fmt.Errorf("failed to get latest bar: %w", err)
 	}
 
+	if vwap.Valid {
+		bar.VWAP, _ = decimal.NewFromString(vwap.String)
+	}
 	if tradeCount.Valid {
 		bar.TradeCount = int(tradeCount.Int32)
 	}

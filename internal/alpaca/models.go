@@ -1,15 +1,19 @@
 package alpaca
 
-// Bar represents a single OHLCV bar from Alpaca's bars API
+import "encoding/json"
+
+// Bar represents a single OHLCV bar from Alpaca's bars API.
+// Prices use json.Number to preserve the exact decimal representation
+// from the API response, avoiding float64 binary rounding artifacts.
 type Bar struct {
-	Timestamp  string  `json:"t"`  // RFC3339 timestamp
-	Open       float64 `json:"o"`
-	High       float64 `json:"h"`
-	Low        float64 `json:"l"`
-	Close      float64 `json:"c"`
-	Volume     float64 `json:"v"`
-	VWAP       float64 `json:"vw"`
-	TradeCount int     `json:"n"`
+	Timestamp  string      `json:"t"` // RFC3339 timestamp
+	Open       json.Number `json:"o"`
+	High       json.Number `json:"h"`
+	Low        json.Number `json:"l"`
+	Close      json.Number `json:"c"`
+	Volume     json.Number `json:"v"`
+	VWAP       json.Number `json:"vw"`
+	TradeCount int         `json:"n"`
 }
 
 // BarsResponse is the response from Alpaca's stock bars endpoint
