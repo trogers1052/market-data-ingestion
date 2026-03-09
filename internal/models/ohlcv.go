@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -17,6 +18,39 @@ type OHLCV struct {
 	Volume     int64           `json:"volume" db:"volume"`
 	VWAP       decimal.Decimal `json:"vwap,omitempty" db:"vwap"`
 	TradeCount int             `json:"trade_count,omitempty" db:"trade_count"`
+}
+
+var zero = decimal.NewFromInt(0)
+
+// Validate checks that an OHLCV bar has sane values before database insert.
+// Returns an error describing the first violation found, or nil if valid.
+func (b *OHLCV) Validate() error {
+	if b.Symbol == "" {
+		return fmt.Errorf("empty symbol")
+	}
+	if b.Time.IsZero() {
+		return fmt.Errorf("%s: zero timestamp", b.Symbol)
+	}
+	if b.Open.LessThanOrEqual(zero) || b.High.LessThanOrEqual(zero) ||
+		b.Low.LessThanOrEqual(zero) || b.Close.LessThanOrEqual(zero) {
+		return fmt.Errorf("%s: non-positive price (O=%s H=%s L=%s C=%s)",
+			b.Symbol, b.Open, b.High, b.Low, b.Close)
+	}
+	if b.High.LessThan(b.Low) {
+		return fmt.Errorf("%s: high (%s) < low (%s)", b.Symbol, b.High, b.Low)
+	}
+	if b.Open.LessThan(b.Low) || b.Open.GreaterThan(b.High) {
+		return fmt.Errorf("%s: open (%s) outside [low=%s, high=%s]",
+			b.Symbol, b.Open, b.Low, b.High)
+	}
+	if b.Close.LessThan(b.Low) || b.Close.GreaterThan(b.High) {
+		return fmt.Errorf("%s: close (%s) outside [low=%s, high=%s]",
+			b.Symbol, b.Close, b.Low, b.High)
+	}
+	if b.Volume < 0 {
+		return fmt.Errorf("%s: negative volume (%d)", b.Symbol, b.Volume)
+	}
+	return nil
 }
 
 // MonitoredSymbol represents a symbol being tracked for market data

@@ -231,19 +231,32 @@ func (s *PollingService) pollSymbol(ctx context.Context, symbol string) (fetched
 		return len(bars), 0, nil
 	}
 
+	// Validate bars before insert — reject corrupted data at the boundary.
+	validBars := make([]models.OHLCV, 0, len(newBars))
+	for i := range newBars {
+		if err := newBars[i].Validate(); err != nil {
+			log.Printf("Rejecting invalid bar for %s: %v", symbol, err)
+			continue
+		}
+		validBars = append(validBars, newBars[i])
+	}
+	if len(validBars) == 0 {
+		return len(bars), 0, nil
+	}
+
 	// Insert to database
-	if err := s.repo.InsertOHLCVBatch(ctx, newBars); err != nil {
+	if err := s.repo.InsertOHLCVBatch(ctx, validBars); err != nil {
 		return len(bars), 0, err
 	}
 
 	// Publish to Kafka
 	if s.kafkaProducer != nil {
-		if err := s.kafkaProducer.PublishQuotesBatch(ctx, newBars, false); err != nil {
+		if err := s.kafkaProducer.PublishQuotesBatch(ctx, validBars, false); err != nil {
 			log.Printf("Warning: failed to publish %s bars to Kafka: %v", symbol, err)
 		}
 	}
 
-	return len(bars), len(newBars), nil
+	return len(bars), len(validBars), nil
 }
 
 // logStats logs polling statistics
