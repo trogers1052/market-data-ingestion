@@ -9,6 +9,7 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/kafka"
 	"github.com/trogers1052/market-data-ingestion/internal/marketdata"
+	"github.com/trogers1052/market-data-ingestion/internal/metrics"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
 
@@ -165,6 +166,9 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 		}
 
 		if len(bars) > 0 {
+			// Record quotes ingested from Alpaca during backfill
+			metrics.QuotesIngested.WithLabelValues(symbol).Add(float64(len(bars)))
+
 			// Log first and last bar for debugging
 			log.Printf("[%s] DEBUG: First bar time: %s, Last bar time: %s",
 				symbol, bars[0].Time.Format("2006-01-02 15:04"), bars[len(bars)-1].Time.Format("2006-01-02 15:04"))
@@ -176,6 +180,9 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 				s.repo.UpdateBackfillStatus(ctx, symbol, models.BackfillStatusFailed, nil, nil, errMsg)
 				return totalBars, fmt.Errorf("failed to insert bars for %s: %w", symbol, err)
 			}
+
+			// Record backfill bars
+			metrics.BackfillBars.Add(float64(len(bars)))
 
 			// Verify insert worked by checking bar count
 			newCount, _ := s.repo.GetBarCount(ctx, symbol)

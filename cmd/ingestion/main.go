@@ -21,6 +21,7 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/ingestion"
 	"github.com/trogers1052/market-data-ingestion/internal/kafka"
+	"github.com/trogers1052/market-data-ingestion/internal/metrics"
 	"github.com/trogers1052/market-data-ingestion/internal/quality"
 	redisclient "github.com/trogers1052/market-data-ingestion/internal/redis"
 	"github.com/trogers1052/market-data-ingestion/internal/status"
@@ -431,6 +432,7 @@ func main() {
 
 	// Log monitored symbol count at startup for flow visibility
 	startupSymbols, _ := repo.GetMonitoredSymbols(ctx)
+	metrics.SymbolsMonitored.Set(float64(len(startupSymbols)))
 	log.Printf("========================================")
 	log.Printf("Service started (Alpaca IEX real-time feed)")
 	log.Printf("Monitoring %d symbols, polling every %ds", len(startupSymbols), cfg.PollIntervalSeconds)

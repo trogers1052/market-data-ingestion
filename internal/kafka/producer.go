@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/trogers1052/market-data-ingestion/internal/metrics"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
 
@@ -125,8 +126,11 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfil
 	// Send message
 	partition, offset, err := p.producer.SendMessage(msg)
 	if err != nil {
+		metrics.KafkaPublishErrors.Inc()
 		return fmt.Errorf("failed to send message to Kafka: %w", err)
 	}
+
+	metrics.QuotesPublished.Inc()
 
 	// Per-quote publish log intentionally omitted to avoid flooding during market hours.
 	// Batch publishes are logged in PublishQuotesBatch.
@@ -201,8 +205,11 @@ func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV, 
 	// Send batch
 	err := p.producer.SendMessages(messages)
 	if err != nil {
+		metrics.KafkaPublishErrors.Add(float64(len(messages)))
 		return fmt.Errorf("failed to send batch to Kafka: %w", err)
 	}
+
+	metrics.QuotesPublished.Add(float64(len(messages)))
 
 	log.Printf("Published %d quote events to %s", len(messages), p.topic)
 	return nil

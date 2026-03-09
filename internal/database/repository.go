@@ -8,8 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shopspring/decimal"
 	_ "github.com/lib/pq"
+	"github.com/shopspring/decimal"
+	"github.com/trogers1052/market-data-ingestion/internal/metrics"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
 
@@ -58,11 +59,18 @@ func (r *Repository) InsertOHLCV(ctx context.Context, bar *models.OHLCV) error {
 			trade_count = EXCLUDED.trade_count
 	`
 
+	start := time.Now()
 	_, err := r.db.ExecContext(ctx, query,
 		bar.Time, bar.Symbol, bar.Open, bar.High, bar.Low, bar.Close,
 		bar.Volume, bar.VWAP, bar.TradeCount)
+	metrics.DBWriteDuration.Observe(time.Since(start).Seconds())
 
-	return err
+	if err != nil {
+		metrics.DBWrites.WithLabelValues("error").Inc()
+		return err
+	}
+	metrics.DBWrites.WithLabelValues("success").Inc()
+	return nil
 }
 
 // InsertOHLCVBatch inserts multiple OHLCV bars efficiently using COPY
@@ -71,9 +79,12 @@ func (r *Repository) InsertOHLCVBatch(ctx context.Context, bars []models.OHLCV) 
 		return nil
 	}
 
+	start := time.Now()
+
 	// Use a transaction for batch insert
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		metrics.DBWrites.WithLabelValues("error").Inc()
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -118,11 +129,20 @@ func (r *Repository) InsertOHLCVBatch(ctx context.Context, bars []models.OHLCV) 
 
 		_, err := tx.ExecContext(ctx, query, valueArgs...)
 		if err != nil {
+			metrics.DBWriteDuration.Observe(time.Since(start).Seconds())
+			metrics.DBWrites.WithLabelValues("error").Inc()
 			return fmt.Errorf("failed to insert batch: %w", err)
 		}
 	}
 
-	return tx.Commit()
+	err = tx.Commit()
+	metrics.DBWriteDuration.Observe(time.Since(start).Seconds())
+	if err != nil {
+		metrics.DBWrites.WithLabelValues("error").Inc()
+		return err
+	}
+	metrics.DBWrites.WithLabelValues("success").Inc()
+	return nil
 }
 
 // GetOHLCV retrieves OHLCV bars for a symbol within a time range

@@ -9,6 +9,7 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/database"
 	"github.com/trogers1052/market-data-ingestion/internal/kafka"
 	"github.com/trogers1052/market-data-ingestion/internal/marketdata"
+	"github.com/trogers1052/market-data-ingestion/internal/metrics"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
 
@@ -76,6 +77,7 @@ func (s *PollingService) Start(ctx context.Context) error {
 	}
 
 	log.Printf("Polling %d symbols: %v", len(symbolList), symbolList)
+	metrics.SymbolsMonitored.Set(float64(len(symbolList)))
 
 	// Create poll ticker
 	ticker := time.NewTicker(s.pollInterval)
@@ -110,6 +112,7 @@ func (s *PollingService) Start(ctx context.Context) error {
 						for i, sym := range symbols {
 							symbolList[i] = sym.Symbol
 						}
+						metrics.SymbolsMonitored.Set(float64(len(symbolList)))
 					}
 				}
 				continue
@@ -198,7 +201,13 @@ func (s *PollingService) pollSymbol(ctx context.Context, symbol string) (fetched
 		return 0, 0, nil
 	}
 
-	// Filter out bars we've already processed
+	// Record quotes ingested from Alpaca
+	metrics.QuotesIngested.WithLabelValues(symbol).Add(float64(len(bars)))
+	metrics.LastQuoteTimestamp.WithLabelValues(symbol).SetToCurrentTime()
+
+	// Filter out bars we've already processed.
+	// Re-read lastFetched under lock — another goroutine (e.g. UpdateSymbols)
+	// may have modified the map while we were fetching bars above.
 	var newBars []models.OHLCV
 	s.lastFetchedMu.Lock()
 	lastTime, exists = s.lastFetched[symbol]
@@ -208,10 +217,11 @@ func (s *PollingService) pollSymbol(ctx context.Context, symbol string) (fetched
 		}
 	}
 
-	// Update last fetched time
+	// Update last fetched time — use lastTime (already read above) to avoid
+	// redundant map lookup.
 	if len(bars) > 0 {
 		latestTime := bars[len(bars)-1].Time
-		if !exists || latestTime.After(s.lastFetched[symbol]) {
+		if !exists || latestTime.After(lastTime) {
 			s.lastFetched[symbol] = latestTime
 		}
 	}

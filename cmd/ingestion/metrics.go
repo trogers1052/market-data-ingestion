@@ -6,6 +6,10 @@ import (
 	"os"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	// Import the metrics package so that promauto registers all custom
+	// metrics with the default Prometheus registry before we serve /metrics.
+	_ "github.com/trogers1052/market-data-ingestion/internal/metrics"
 )
 
 func startMetricsServer() {

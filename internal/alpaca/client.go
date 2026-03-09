@@ -12,6 +12,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/trogers1052/market-data-ingestion/internal/marketdata"
+	"github.com/trogers1052/market-data-ingestion/internal/metrics"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
 
@@ -174,7 +175,9 @@ func (c *Client) doRequest(ctx context.Context, endpoint string, params map[stri
 		req.Header.Set("APCA-API-KEY-ID", c.keyID)
 		req.Header.Set("APCA-API-SECRET-KEY", c.secretKey)
 
+		apiStart := time.Now()
 		resp, err := c.httpClient.Do(req)
+		metrics.APICallDuration.Observe(time.Since(apiStart).Seconds())
 		if err != nil {
 			return nil, err
 		}
