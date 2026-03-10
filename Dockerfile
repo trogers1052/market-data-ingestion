@@ -4,7 +4,7 @@ FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 ARG TARGETARCH
 
 # Install timezone data for the builder
-RUN apk add --no-cache tzdata ca-certificates
+RUN apk add --no-cache tzdata ca-certificates git
 
 WORKDIR /app
 
