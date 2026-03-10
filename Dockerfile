@@ -40,4 +40,7 @@ USER nonroot:nonroot
 
 ENV TZ=America/New_York
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+    CMD ["/healthcheck"]
+
 ENTRYPOINT ["/market-data-ingestion"]
