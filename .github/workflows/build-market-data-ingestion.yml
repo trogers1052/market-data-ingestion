@@ -7,20 +7,23 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  GOPRIVATE: github.com/trogers1052/*
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: trogers1052/trading-testkit
-          ref: v0.1.0
-          path: ../trading-testkit
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: Resolve trading-testkit from GitHub
+        run: |
+          sed -i '/replace.*trading-testkit/d' go.mod
+          go get github.com/trogers1052/trading-testkit@v0.1.0
+          go mod tidy
       - run: go vet ./...
 
   unit-test:
@@ -28,14 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: trogers1052/trading-testkit
-          ref: v0.1.0
-          path: ../trading-testkit
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: Resolve trading-testkit from GitHub
+        run: |
+          sed -i '/replace.*trading-testkit/d' go.mod
+          go get github.com/trogers1052/trading-testkit@v0.1.0
+          go mod tidy
       - run: go test -v -race -short -cover ./...
 
   integration-test:
@@ -43,14 +46,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: trogers1052/trading-testkit
-          ref: v0.1.0
-          path: ../trading-testkit
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: Resolve trading-testkit from GitHub
+        run: |
+          sed -i '/replace.*trading-testkit/d' go.mod
+          go get github.com/trogers1052/trading-testkit@v0.1.0
+          go mod tidy
       - name: Run integration tests
         run: go test -v -race -run 'Integration' -timeout 300s ./...
 
@@ -64,14 +67,14 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: trogers1052/trading-testkit
-          ref: v0.1.0
-          path: ../trading-testkit
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.0'
+      - name: Resolve trading-testkit from GitHub
+        run: |
+          sed -i '/replace.*trading-testkit/d' go.mod
+          go get github.com/trogers1052/trading-testkit@v0.1.0
+          go mod tidy
       - name: Build Linux ARM64 binary
         env:
           GOOS: linux
