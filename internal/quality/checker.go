@@ -76,7 +76,7 @@ func (c *Checker) CheckSymbol(ctx context.Context, symbol string, from, to time.
 	}
 
 	// Get bar count
-	count, err := c.repo.GetBarCount(ctx, symbol)
+	count, err := c.repo.GetBarCountExact(ctx, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get bar count: %w", err)
 	}

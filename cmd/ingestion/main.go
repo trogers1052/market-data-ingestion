@@ -137,7 +137,7 @@ func main() {
 				status = "disabled"
 			}
 			// Get bar count for this symbol
-			count, _ := repo.GetBarCount(ctx, s.Symbol)
+			count, _ := repo.GetBarCountExact(ctx, s.Symbol)
 			log.Printf("  %s (%s) - %s [%d bars]", s.Symbol, s.Name, status, count)
 		}
 		return
