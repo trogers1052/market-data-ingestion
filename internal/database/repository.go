@@ -384,45 +384,18 @@ func (r *Repository) GetSymbolsNeedingBackfill(ctx context.Context) ([]string, e
 	return symbols, rows.Err()
 }
 
-// GetBarCount returns the approximate number of bars for a symbol.
-// Uses a bounded time-range count on the hypertable to avoid planning across
-// all 1,385+ compressed chunks, which was causing 1.7s planning time per
-// symbol (108 symbols × 1.8s = 194s per 30-second status cycle, pegging
-// the TimescaleDB CPU at ~100% continuously).
+// GetBarCount returns a fast bar count for a symbol using only recent data.
+// Counts the last 7 days only, hitting 1-2 uncompressed chunks (~5ms).
+// This is sufficient for the status manager which only needs to know:
+//   - Is there any data? (count > 0)
+//   - Is there enough for analytics? (count >= 200)
 //
-// The approach: count only the most recent 7 days of uncompressed chunks
-// and add the historical estimate from backfill_status metadata. This
-// gives a close-enough count for status reporting in <10ms instead of ~1.8s.
+// For the total historical count, use GetBarCountExact (expensive).
 func (r *Repository) GetBarCount(ctx context.Context, symbol string) (int64, error) {
-	// Fast path: count recent bars only (hits 1-2 uncompressed chunks)
 	query := `SELECT COUNT(*) FROM ohlcv_1min WHERE symbol = $1 AND time > NOW() - INTERVAL '7 days'`
-
-	var recentCount int64
-	err := r.db.QueryRowContext(ctx, query, symbol).Scan(&recentCount)
-	if err != nil {
-		return 0, err
-	}
-
-	// Estimate total using approximate_row_count (reads pg_class stats, instant)
-	// and scale by the symbol's proportion of recent data.
-	// For status reporting, this is more than accurate enough.
-	var approxTotal int64
-	approxQuery := `SELECT COALESCE(approximate_row_count('ohlcv_1min'), 0)`
-	if err := r.db.QueryRowContext(ctx, approxQuery).Scan(&approxTotal); err != nil {
-		// Fallback: just return recent count if approximate_row_count unavailable
-		return recentCount, nil
-	}
-
-	// Get number of distinct symbols to estimate per-symbol share
-	var symbolCount int64
-	symbolQuery := `SELECT COUNT(*) FROM monitored_symbols`
-	if err := r.db.QueryRowContext(ctx, symbolQuery).Scan(&symbolCount); err != nil || symbolCount == 0 {
-		return recentCount, nil
-	}
-
-	// Per-symbol estimate: total rows / number of symbols
-	estimatedCount := approxTotal / symbolCount
-	return estimatedCount, nil
+	var count int64
+	err := r.db.QueryRowContext(ctx, query, symbol).Scan(&count)
+	return count, err
 }
 
 // GetBarCountExact returns the exact number of bars for a symbol.
