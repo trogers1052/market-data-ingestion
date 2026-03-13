@@ -61,7 +61,7 @@ func Load() (*Config, error) {
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnvInt("DB_PORT", 5432),
 		DBUser:     getEnv("DB_USER", "trader"),
-		DBPassword: getEnv("DB_PASSWORD", "REDACTED_PASSWORD"),
+		DBPassword: getEnv("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", "market_data"),
 		DBSSLMode:  getEnv("DB_SSL_MODE", "disable"),
 
