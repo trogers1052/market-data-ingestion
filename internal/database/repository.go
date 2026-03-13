@@ -193,12 +193,14 @@ func (r *Repository) GetOHLCV(ctx context.Context, symbol string, from, to time.
 	return bars, rows.Err()
 }
 
-// GetLatestBar returns the most recent bar for a symbol
+// GetLatestBar returns the most recent bar for a symbol.
+// Uses a 7-day time bound to limit chunk scanning in the query planner.
 func (r *Repository) GetLatestBar(ctx context.Context, symbol string) (*models.OHLCV, error) {
 	query := `
 		SELECT time, symbol, open, high, low, close, volume, vwap, trade_count
 		FROM ohlcv_1min
 		WHERE symbol = $1
+		  AND time > NOW() - INTERVAL '7 days'
 		ORDER BY time DESC
 		LIMIT 1
 	`
