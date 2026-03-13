@@ -53,8 +53,8 @@ func (s *BackfillService) BackfillSymbol(ctx context.Context, symbol string) err
 		return fmt.Errorf("cannot determine existing data range for %s: %w", symbol, err)
 	}
 
-	// Also get bar count for debugging (exact count — backfill is not a hot loop)
-	barCount, countErr := s.repo.GetBarCountExact(ctx, symbol)
+	// Also get bar count for debugging (approximate — exact is too expensive at startup)
+	barCount, countErr := s.repo.GetBarCount(ctx, symbol)
 	if countErr != nil {
 		log.Printf("[%s] Warning: failed to get bar count: %v", symbol, countErr)
 	}
@@ -184,8 +184,8 @@ func (s *BackfillService) fetchDateRange(ctx context.Context, symbol string, fet
 			// Record backfill bars
 			metrics.BackfillBars.Add(float64(len(bars)))
 
-			// Verify insert worked by checking bar count (exact — backfill runs once, not in a loop)
-			newCount, _ := s.repo.GetBarCountExact(ctx, symbol)
+			// Verify insert worked by checking bar count (approximate — just for debug logging)
+			newCount, _ := s.repo.GetBarCount(ctx, symbol)
 			log.Printf("[%s] DEBUG: After insert, total bars in DB: %d", symbol, newCount)
 
 			// Publish to Kafka (non-blocking, log errors but don't fail)
