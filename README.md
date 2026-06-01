@@ -45,8 +45,9 @@ Ingests historical and real-time 1-minute OHLCV (Open, High, Low, Close, Volume)
 # Create database
 createdb market_data
 
-# Run migrations
-psql market_data < migrations/001_create_ohlcv_hypertable.sql
+# Run migrations (ordered golang-migrate up files under db/migrations/)
+psql market_data < db/migrations/000001_create_ohlcv_hypertable.up.sql
+psql market_data < db/migrations/000002_seed_context_symbols.up.sql
 ```
 
 ### 2. Configure Environment
@@ -217,3 +218,9 @@ WHERE symbol = 'AAPL'
 GROUP BY bucket, symbol
 ORDER BY bucket;
 ```
+
+---
+
+## Built with Claude Code
+
+A large portion of this project — implementation, tests, and documentation — was written in pair-programming sessions with [Claude Code](https://claude.com/claude-code), Anthropic's agentic command-line tool.
