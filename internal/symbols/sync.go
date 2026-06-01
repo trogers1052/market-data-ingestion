@@ -39,6 +39,12 @@ func NewStockServiceDB(dsn string) (*StockServiceDB, error) {
 	return &StockServiceDB{db: db}, nil
 }
 
+// NewStockServiceDBWithDB wraps an existing *sql.DB. It performs no pool
+// configuration or ping, making it suitable for tests with a mock database.
+func NewStockServiceDBWithDB(db *sql.DB) *StockServiceDB {
+	return &StockServiceDB{db: db}
+}
+
 // GetPositionSymbols fetches all symbols from the positions table
 func (s *StockServiceDB) GetPositionSymbols(ctx context.Context) ([]string, error) {
 	query := `SELECT DISTINCT symbol FROM positions WHERE quantity > 0 ORDER BY symbol`

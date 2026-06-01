@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -126,65 +126,33 @@ func main() {
 
 	// Handle list-symbols command
 	if *listSymbols {
-		syms, err := repo.GetMonitoredSymbols(ctx)
-		if err != nil {
-			log.Fatalf("Failed to get monitored symbols: %v", err)
-		}
-		log.Println("Monitored symbols:")
-		for _, s := range syms {
-			status := "enabled"
-			if !s.Enabled {
-				status = "disabled"
-			}
-			// Get bar count for this symbol
-			count, _ := repo.GetBarCountExact(ctx, s.Symbol)
-			log.Printf("  %s (%s) - %s [%d bars]", s.Symbol, s.Name, status, count)
+		if err := listSymbolsCmd(ctx, repo); err != nil {
+			log.Fatalf("%v", err)
 		}
 		return
 	}
 
 	// Handle add-symbol command
 	if *addSymbol != "" {
-		parts := strings.SplitN(*addSymbol, ":", 2)
-		symbol := strings.ToUpper(parts[0])
-		name := symbol
-		if len(parts) > 1 {
-			name = parts[1]
+		if _, _, err := addSymbolCmd(ctx, repo, alpacaClient, *addSymbol); err != nil {
+			log.Fatalf("%v", err)
 		}
-
-		// Fetch ticker details from Alpaca
-		details, err := alpacaClient.GetTickerDetails(ctx, symbol)
-		if err != nil {
-			log.Printf("Warning: could not fetch ticker details: %v", err)
-		} else if details.Name != "" {
-			name = details.Name
-		}
-
-		if err := repo.UpsertMonitoredSymbol(ctx, symbol, name, true); err != nil {
-			log.Fatalf("Failed to add symbol: %v", err)
-		}
-		log.Printf("Added symbol: %s (%s)", symbol, name)
 		return
 	}
 
 	// Handle remove-symbol command
 	if *removeSymbol != "" {
-		symbol := strings.ToUpper(*removeSymbol)
-		if err := repo.UpsertMonitoredSymbol(ctx, symbol, "", false); err != nil {
-			log.Fatalf("Failed to remove symbol: %v", err)
+		if _, err := removeSymbolCmd(ctx, repo, *removeSymbol); err != nil {
+			log.Fatalf("%v", err)
 		}
-		log.Printf("Disabled symbol: %s", symbol)
 		return
 	}
 
 	// Handle sync-positions command
 	if *syncPositions {
-		dsn := *stockServiceDSN
-		if dsn == "" {
-			dsn = os.Getenv("STOCK_SERVICE_DSN")
-		}
-		if dsn == "" {
-			log.Fatalf("Stock-Service DSN required. Use -stock-service-dsn or STOCK_SERVICE_DSN env var")
+		dsn, err := resolveStockServiceDSN(*stockServiceDSN)
+		if err != nil {
+			log.Fatalf("%v", err)
 		}
 
 		posSource, err := symbols.NewStockServiceDB(dsn)
@@ -193,16 +161,8 @@ func main() {
 		}
 		defer posSource.Close()
 
-		syncService := symbols.NewSymbolSyncService(repo, posSource, 0)
-		added, err := syncService.SyncFromPositions(ctx)
-		if err != nil {
-			log.Fatalf("Sync failed: %v", err)
-		}
-
-		if len(added) > 0 {
-			log.Printf("Added %d symbols from positions: %v", len(added), added)
-		} else {
-			log.Println("No new symbols to add from positions")
+		if _, err := syncPositionsCmd(ctx, repo, posSource); err != nil {
+			log.Fatalf("%v", err)
 		}
 		return
 	}
@@ -211,35 +171,8 @@ func main() {
 	if *qualityCheck {
 		log.Printf("Running data quality check (last %d days)", *days)
 		checker := quality.NewChecker(repo, alpacaClient, scheduler)
-
-		to := time.Now()
-		from := to.AddDate(0, 0, -*days)
-
-		var symbolList []string
-		if *backfillSymbols != "" {
-			symbolList = strings.Split(*backfillSymbols, ",")
-			for i := range symbolList {
-				symbolList[i] = strings.TrimSpace(strings.ToUpper(symbolList[i]))
-			}
-		}
-
-		if len(symbolList) > 0 {
-			for _, symbol := range symbolList {
-				report, err := checker.CheckSymbol(ctx, symbol, from, to)
-				if err != nil {
-					log.Printf("Quality check failed for %s: %v", symbol, err)
-					continue
-				}
-				printQualityReport(report)
-			}
-		} else {
-			reports, err := checker.CheckAllSymbols(ctx, from, to)
-			if err != nil {
-				log.Fatalf("Quality check failed: %v", err)
-			}
-			for _, report := range reports {
-				printQualityReport(report)
-			}
+		if err := runQualityCheck(ctx, checker, parseSymbolList(*backfillSymbols), *days); err != nil {
+			log.Fatalf("%v", err)
 		}
 		return
 	}
@@ -338,13 +271,7 @@ func main() {
 	if *backfillOnly {
 		log.Println("Running in backfill-only mode")
 
-		var syms []string
-		if *backfillSymbols != "" {
-			syms = strings.Split(*backfillSymbols, ",")
-			for i := range syms {
-				syms[i] = strings.TrimSpace(strings.ToUpper(syms[i]))
-			}
-		}
+		syms := parseSymbolList(*backfillSymbols)
 
 		if len(syms) > 0 {
 			log.Printf("Backfilling specific symbols: %v", syms)
@@ -495,22 +422,21 @@ func main() {
 }
 
 func runMigrations(databaseUrl string) error {
-	// The "file://" prefix tells the migrate library to use the file driver
-	// Use absolute path for Docker container compatibility
-	m, err := migrate.New(
-		"file:///db/migrations", // Absolute path to migrations directory in container
-		databaseUrl)
+	return runMigrationsFromSource("file:///db/migrations", databaseUrl)
+}
+
+// runMigrationsFromSource applies all pending migrations from the given source
+// URL against the given database URL. It returns an error rather than exiting,
+// so callers (and tests) can decide how to handle failures.
+func runMigrationsFromSource(sourceURL, databaseUrl string) error {
+	m, err := migrate.New(sourceURL, databaseUrl)
 	if err != nil {
-		log.Fatalf("could not create migrate instance: %v", err)
+		return fmt.Errorf("could not create migrate instance: %w", err)
 	}
 
-	// Apply all available migrations up to the latest version
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		log.Fatalf("failed to apply migrations: %v", err)
-	}
-
-	// If ErrNoChange is returned, it simply means the database was already current
-	if err == migrate.ErrNoChange {
+		return fmt.Errorf("failed to apply migrations: %w", err)
+	} else if err == migrate.ErrNoChange {
 		log.Println("No migrations to apply; database is up to date.")
 	}
 

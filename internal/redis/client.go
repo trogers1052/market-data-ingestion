@@ -90,6 +90,12 @@ func NewClient(addr, password string, db int) (*Client, error) {
 	return &Client{client: client}, nil
 }
 
+// NewClientWithRedis wraps an existing *redis.Client. It performs no ping,
+// making it suitable for tests backed by an in-memory Redis (e.g. miniredis).
+func NewClientWithRedis(client *redis.Client) *Client {
+	return &Client{client: client}
+}
+
 // Close closes the Redis connection
 func (c *Client) Close() error {
 	return c.client.Close()

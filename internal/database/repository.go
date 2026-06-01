@@ -39,6 +39,13 @@ func NewRepository(dsn string) (*Repository, error) {
 	return &Repository{db: db}, nil
 }
 
+// NewRepositoryWithDB wraps an existing *sql.DB in a Repository. It performs
+// no connection pooling configuration or ping, making it suitable for tests
+// that supply a mock or in-memory database.
+func NewRepositoryWithDB(db *sql.DB) *Repository {
+	return &Repository{db: db}
+}
+
 // Close closes the database connection
 func (r *Repository) Close() error {
 	return r.db.Close()
