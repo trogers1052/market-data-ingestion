@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -25,19 +26,36 @@ const (
 // Client is the Alpaca market data client.
 // It implements marketdata.Client using Alpaca's free IEX feed (real-time, no delay).
 type Client struct {
-	keyID      string
-	secretKey  string
-	httpClient *http.Client
+	keyID         string
+	secretKey     string
+	httpClient    *http.Client
+	dataBaseURL   string
+	brokerBaseURL string
 }
 
-// NewClient creates a new Alpaca API client
+// NewClient creates a new Alpaca API client.
+//
+// By default it talks to Alpaca's production data and broker endpoints. The base
+// URLs can be overridden via the ALPACA_DATA_URL and ALPACA_BROKER_URL
+// environment variables, which is primarily useful for pointing tests at a
+// fake/httptest server instead of the real API.
 func NewClient(keyID, secretKey string) *Client {
+	dataURL := dataBaseURL
+	if v := os.Getenv("ALPACA_DATA_URL"); v != "" {
+		dataURL = v
+	}
+	brokerURL := brokerBaseURL
+	if v := os.Getenv("ALPACA_BROKER_URL"); v != "" {
+		brokerURL = v
+	}
 	return &Client{
 		keyID:     keyID,
 		secretKey: secretKey,
 		httpClient: &http.Client{
 			Timeout: httpTimeout,
 		},
+		dataBaseURL:   dataURL,
+		brokerBaseURL: brokerURL,
 	}
 }
 
@@ -54,7 +72,7 @@ func (c *Client) GetDailyBars(ctx context.Context, symbol string, from, to time.
 
 // GetTickerDetails fetches the name and metadata for a symbol via Alpaca's assets API
 func (c *Client) GetTickerDetails(ctx context.Context, symbol string) (*marketdata.TickerDetails, error) {
-	endpoint := fmt.Sprintf("%s/v2/assets/%s", brokerBaseURL, symbol)
+	endpoint := fmt.Sprintf("%s/v2/assets/%s", c.brokerBaseURL, symbol)
 
 	body, err := c.doRequest(ctx, endpoint, nil)
 	if err != nil {
@@ -75,7 +93,7 @@ func (c *Client) GetTickerDetails(ctx context.Context, symbol string) (*marketda
 // getBars is the shared implementation for GetMinuteBars and GetDailyBars.
 // It handles pagination via next_page_token.
 func (c *Client) getBars(ctx context.Context, symbol string, timeframe string, from, to time.Time) ([]models.OHLCV, error) {
-	endpoint := fmt.Sprintf("%s/v2/stocks/%s/bars", dataBaseURL, symbol)
+	endpoint := fmt.Sprintf("%s/v2/stocks/%s/bars", c.dataBaseURL, symbol)
 
 	var allBars []models.OHLCV
 	pageToken := ""

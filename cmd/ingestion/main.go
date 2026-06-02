@@ -29,23 +29,63 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/watchlist"
 )
 
+// cliOptions holds the parsed command-line flags that select the service mode.
+// They are passed to run() so the bootstrap logic is testable without touching
+// global flag state.
+type cliOptions struct {
+	backfillOnly      bool
+	backfillSymbols   string
+	addSymbol         string
+	removeSymbol      string
+	listSymbols       bool
+	qualityCheck      bool
+	fillGaps          bool
+	refreshAggregates bool
+	syncPositions     bool
+	stockServiceDSN   string
+	days              int
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	// Parse command line flags
-	backfillOnly := flag.Bool("backfill", false, "Run backfill only and exit")
-	backfillSymbols := flag.String("symbols", "", "Comma-separated list of symbols (for -backfill, -quality, -fill-gaps)")
-	addSymbol := flag.String("add-symbol", "", "Add a symbol to monitor (format: SYMBOL or SYMBOL:Name)")
-	removeSymbol := flag.String("remove-symbol", "", "Remove a symbol from monitoring")
-	listSymbols := flag.Bool("list-symbols", false, "List all monitored symbols")
-	qualityCheck := flag.Bool("quality", false, "Run data quality check and exit")
-	fillGaps := flag.Bool("fill-gaps", false, "Detect and fill data gaps")
-	refreshAggregates := flag.Bool("refresh", false, "Refresh continuous aggregates (5min, 1hour, daily)")
-	syncPositions := flag.Bool("sync-positions", false, "Sync symbols from Stock-Service positions")
-	stockServiceDSN := flag.String("stock-service-dsn", "", "Stock-Service database DSN for position sync")
-	days := flag.Int("days", 30, "Number of days to check for quality/gaps (default: 30)")
+	opts := cliOptions{}
+	flag.BoolVar(&opts.backfillOnly, "backfill", false, "Run backfill only and exit")
+	flag.StringVar(&opts.backfillSymbols, "symbols", "", "Comma-separated list of symbols (for -backfill, -quality, -fill-gaps)")
+	flag.StringVar(&opts.addSymbol, "add-symbol", "", "Add a symbol to monitor (format: SYMBOL or SYMBOL:Name)")
+	flag.StringVar(&opts.removeSymbol, "remove-symbol", "", "Remove a symbol from monitoring")
+	flag.BoolVar(&opts.listSymbols, "list-symbols", false, "List all monitored symbols")
+	flag.BoolVar(&opts.qualityCheck, "quality", false, "Run data quality check and exit")
+	flag.BoolVar(&opts.fillGaps, "fill-gaps", false, "Detect and fill data gaps")
+	flag.BoolVar(&opts.refreshAggregates, "refresh", false, "Refresh continuous aggregates (5min, 1hour, daily)")
+	flag.BoolVar(&opts.syncPositions, "sync-positions", false, "Sync symbols from Stock-Service positions")
+	flag.StringVar(&opts.stockServiceDSN, "stock-service-dsn", "", "Stock-Service database DSN for position sync")
+	flag.IntVar(&opts.days, "days", 30, "Number of days to check for quality/gaps (default: 30)")
 	flag.Parse()
 
+	// Build a context that is cancelled on SIGINT/SIGTERM. This is the only
+	// place that installs OS signal handling; run() treats context
+	// cancellation as the shutdown trigger so it can be driven from tests too.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, opts); err != nil {
+		log.Fatalf("%v", err)
+	}
+}
+
+// run is the testable service bootstrap. It wires up the database, migrations,
+// Alpaca client, Redis, Kafka and the polling/backfill goroutines, then blocks
+// until either the polling service returns or the provided context is
+// cancelled. On context cancellation it performs a graceful shutdown and
+// returns nil. It returns a non-nil error only when bootstrap fails (or a
+// one-shot command fails); long-running mode never returns an error on a clean
+// context-driven shutdown.
+//
+// main() is a thin wrapper that parses flags, installs signal handling and
+// calls run(); all behavior previously inline in main() lives here unchanged.
+func run(ctx context.Context, opts cliOptions) error {
 	log.Println("========================================")
 	log.Println("Market Data Ingestion Service")
 	log.Println("========================================")
@@ -85,7 +125,7 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	log.Printf("Database: %s:%d/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
@@ -98,23 +138,19 @@ func main() {
 	// Connect to database
 	repo, err := database.NewRepository(cfg.DatabaseDSN())
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 	defer repo.Close()
 	log.Println("Connected to TimescaleDB")
 
 	// Run migrations (requires URL format with postgres:// scheme)
 	if err := runMigrations(cfg.DatabaseURL()); err != nil {
-		log.Fatalf("Failed to run database migrations: %v", err)
+		return fmt.Errorf("failed to run database migrations: %w", err)
 	}
 
 	// Create Alpaca client (free IEX feed — real-time, no delay)
 	alpacaClient := alpaca.NewClient(cfg.AlpacaKeyID, cfg.AlpacaSecretKey)
 	log.Println("Alpaca client initialized (IEX feed)")
-
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Create market scheduler
 	scheduler := ingestion.NewMarketScheduler(
@@ -125,85 +161,79 @@ func main() {
 	)
 
 	// Handle list-symbols command
-	if *listSymbols {
-		if err := listSymbolsCmd(ctx, repo); err != nil {
-			log.Fatalf("%v", err)
-		}
-		return
+	if opts.listSymbols {
+		return listSymbolsCmd(ctx, repo)
 	}
 
 	// Handle add-symbol command
-	if *addSymbol != "" {
-		if _, _, err := addSymbolCmd(ctx, repo, alpacaClient, *addSymbol); err != nil {
-			log.Fatalf("%v", err)
+	if opts.addSymbol != "" {
+		if _, _, err := addSymbolCmd(ctx, repo, alpacaClient, opts.addSymbol); err != nil {
+			return err
 		}
-		return
+		return nil
 	}
 
 	// Handle remove-symbol command
-	if *removeSymbol != "" {
-		if _, err := removeSymbolCmd(ctx, repo, *removeSymbol); err != nil {
-			log.Fatalf("%v", err)
+	if opts.removeSymbol != "" {
+		if _, err := removeSymbolCmd(ctx, repo, opts.removeSymbol); err != nil {
+			return err
 		}
-		return
+		return nil
 	}
 
 	// Handle sync-positions command
-	if *syncPositions {
-		dsn, err := resolveStockServiceDSN(*stockServiceDSN)
+	if opts.syncPositions {
+		dsn, err := resolveStockServiceDSN(opts.stockServiceDSN)
 		if err != nil {
-			log.Fatalf("%v", err)
+			return err
 		}
 
 		posSource, err := symbols.NewStockServiceDB(dsn)
 		if err != nil {
-			log.Fatalf("Failed to connect to Stock-Service: %v", err)
+			return fmt.Errorf("failed to connect to Stock-Service: %w", err)
 		}
 		defer posSource.Close()
 
 		if _, err := syncPositionsCmd(ctx, repo, posSource); err != nil {
-			log.Fatalf("%v", err)
+			return err
 		}
-		return
+		return nil
 	}
 
 	// Handle quality check command
-	if *qualityCheck {
-		log.Printf("Running data quality check (last %d days)", *days)
+	if opts.qualityCheck {
+		log.Printf("Running data quality check (last %d days)", opts.days)
 		checker := quality.NewChecker(repo, alpacaClient, scheduler)
-		if err := runQualityCheck(ctx, checker, parseSymbolList(*backfillSymbols), *days); err != nil {
-			log.Fatalf("%v", err)
-		}
-		return
+		return runQualityCheck(ctx, checker, parseSymbolList(opts.backfillSymbols), opts.days)
 	}
 
 	// Handle fill-gaps command
-	if *fillGaps {
-		log.Printf("Detecting and filling gaps (last %d days)", *days)
+	if opts.fillGaps {
+		log.Printf("Detecting and filling gaps (last %d days)", opts.days)
 		checker := quality.NewChecker(repo, alpacaClient, scheduler)
 
 		to := time.Now()
-		from := to.AddDate(0, 0, -*days)
+		from := to.AddDate(0, 0, -opts.days)
 
 		if err := checker.AutoFill(ctx, from, to); err != nil {
-			log.Fatalf("Gap filling failed: %v", err)
+			return fmt.Errorf("gap filling failed: %w", err)
 		}
 		log.Println("Gap filling complete")
-		return
+		return nil
 	}
 
 	// Handle refresh aggregates command
-	if *refreshAggregates {
-		log.Printf("Refreshing continuous aggregates (last %d days)", *days)
+	if opts.refreshAggregates {
+		log.Printf("Refreshing continuous aggregates (last %d days)", opts.days)
 
 		to := time.Now()
-		from := to.AddDate(0, 0, -*days)
+		from := to.AddDate(0, 0, -opts.days)
 
 		if err := repo.RefreshContinuousAggregates(ctx, from, to); err != nil {
-			log.Fatalf("Refresh failed: %v", err)
+			return fmt.Errorf("refresh failed: %w", err)
 		}
 		log.Println("Continuous aggregates refreshed")
-		return
+		return nil
 	}
 
 	scheduler.LogStatus()
@@ -268,25 +298,25 @@ func main() {
 	backfillService := ingestion.NewBackfillService(alpacaClient, repo, cfg.BackfillMonths, kafkaProducer, cfg.BackfillDelayDays)
 
 	// Handle backfill-only mode
-	if *backfillOnly {
+	if opts.backfillOnly {
 		log.Println("Running in backfill-only mode")
 
-		syms := parseSymbolList(*backfillSymbols)
+		syms := parseSymbolList(opts.backfillSymbols)
 
 		if len(syms) > 0 {
 			log.Printf("Backfilling specific symbols: %v", syms)
 			if err := backfillService.BackfillSymbols(ctx, syms); err != nil {
-				log.Fatalf("Backfill failed: %v", err)
+				return fmt.Errorf("backfill failed: %w", err)
 			}
 		} else {
 			log.Println("Backfilling all monitored symbols")
 			if err := backfillService.BackfillAll(ctx); err != nil {
-				log.Fatalf("Backfill failed: %v", err)
+				return fmt.Errorf("backfill failed: %w", err)
 			}
 		}
 
 		log.Println("Backfill complete")
-		return
+		return nil
 	}
 
 	// Create polling service for REST API data ingestion
@@ -309,9 +339,11 @@ func main() {
 		log.Println("Status manager started - publishing data freshness to Redis")
 	}
 
-	// Set up signal handling for graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// Derive a cancellable context so we can tear down all background
+	// goroutines on shutdown, regardless of whether the trigger was the parent
+	// context (signal) or an error from the polling service.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	// WaitGroup to track background goroutines
 	var wg sync.WaitGroup
@@ -321,7 +353,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		log.Println("Checking for symbols needing backfill...")
-		if err := backfillService.BackfillAll(ctx); err != nil {
+		if err := backfillService.BackfillAll(runCtx); err != nil {
 			log.Printf("Initial backfill had errors: %v", err)
 		}
 	}()
@@ -331,7 +363,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := watchlistSyncService.StartConsumer(ctx); err != nil {
+			if err := watchlistSyncService.StartConsumer(runCtx); err != nil {
 				log.Printf("Watchlist consumer error: %v", err)
 			}
 		}()
@@ -342,7 +374,7 @@ func main() {
 			defer wg.Done()
 			for symbol := range watchlistSyncService.BackfillChannel() {
 				log.Printf("Processing backfill for new symbol: %s", symbol)
-				if err := backfillService.BackfillSymbols(ctx, []string{symbol}); err != nil {
+				if err := backfillService.BackfillSymbols(runCtx, []string{symbol}); err != nil {
 					log.Printf("Backfill error for %s: %v", symbol, err)
 				}
 			}
@@ -354,11 +386,11 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		defer wg.Done()
-		errCh <- pollingService.Start(ctx)
+		errCh <- pollingService.Start(runCtx)
 	}()
 
 	// Log monitored symbol count at startup for flow visibility
-	startupSymbols, _ := repo.GetMonitoredSymbols(ctx)
+	startupSymbols, _ := repo.GetMonitoredSymbols(runCtx)
 	metrics.SymbolsMonitored.Set(float64(len(startupSymbols)))
 	log.Printf("========================================")
 	log.Printf("Service started (Alpaca IEX real-time feed)")
@@ -366,18 +398,15 @@ func main() {
 	log.Printf("Kafka: %v, topic: %s", cfg.KafkaEnabled, cfg.KafkaQuotesTopic)
 	log.Printf("========================================")
 
-	// Wait for shutdown signal or error
+	// Wait for shutdown signal (context cancellation) or a polling error.
 	select {
-	case <-quit:
+	case <-ctx.Done():
 		log.Println("Shutdown signal received")
 	case err := <-errCh:
 		if err != nil {
 			log.Printf("Service error: %v", err)
 		}
 	}
-
-	// Stop accepting new OS signals
-	signal.Stop(quit)
 
 	// Graceful shutdown with timeout to prevent hanging forever
 	const shutdownTimeout = 15 * time.Second
@@ -419,10 +448,17 @@ func main() {
 	// Deferred cleanup runs after this: statusManager.Stop(), kafkaProducer.Close(),
 	// redisClient.Close(), repo.Close()
 	log.Println("Service stopped")
+	return nil
 }
 
+// migrationsSourceURL is the golang-migrate source URL for the database
+// migrations. It defaults to the container path baked into the Docker image and
+// is only overridden by tests that need to point at migrations on a different
+// filesystem path.
+var migrationsSourceURL = "file:///db/migrations"
+
 func runMigrations(databaseUrl string) error {
-	return runMigrationsFromSource("file:///db/migrations", databaseUrl)
+	return runMigrationsFromSource(migrationsSourceURL, databaseUrl)
 }
 
 // runMigrationsFromSource applies all pending migrations from the given source
