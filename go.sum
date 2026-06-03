@@ -201,8 +201,8 @@ github.com/tklauser/go-sysconf v0.3.12 h1:0QaGUFOdQaIVdPgfITYzaTegZvdCjmYO52cSFA
 github.com/tklauser/go-sysconf v0.3.12/go.mod h1:Ho14jnntGE1fpdOqQEEaiKRpvIavV0hSfmBq8nJbHYI=
 github.com/tklauser/numcpus v0.6.1 h1:ng9scYS7az0Bk4OZLvrNXNSAO2Pxr1XXRAPyjhIx+Fk=
 github.com/tklauser/numcpus v0.6.1/go.mod h1:1XfjsgE2zo8GVw7POkMbHENHzVg3GzmoZ9fESEdAacY=
-github.com/trogers1052/trading-go-commons v0.1.0 h1:kmhOeRPKibS9dswRDVcV0EkwJ2+Rj4lsdGVAiEENFaE=
-github.com/trogers1052/trading-go-commons v0.1.0/go.mod h1:kaIiXkQIUW2prrsCNAexgUp/6IXG/jkYk+upq72xFSQ=
+github.com/trogers1052/trading-go-commons v0.2.0 h1:Q4sfWjgvAHgSV6eemuwV3zeQuRLaVn0UoFVtk4sXzS0=
+github.com/trogers1052/trading-go-commons v0.2.0/go.mod h1:kaIiXkQIUW2prrsCNAexgUp/6IXG/jkYk+upq72xFSQ=
 github.com/twmb/franz-go v1.16.1 h1:rpWc7fB9jd7TgmCyfxzenBI+QbgS8ZfJOUQE+tzPtbE=
 github.com/twmb/franz-go v1.16.1/go.mod h1:/pER254UPPGp/4WfGqRi+SIRGE50RSQzVubQp6+N4FA=
 github.com/twmb/franz-go/pkg/kadm v1.11.0 h1:FfeWJ0qadntFpAcQt8JzNXW4dijjytZNLrzJuzzzuxA=

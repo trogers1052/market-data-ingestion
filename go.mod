@@ -12,7 +12,7 @@ require (
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/shopspring/decimal v1.3.1
 	github.com/stretchr/testify v1.11.1
-	github.com/trogers1052/trading-go-commons v0.1.0
+	github.com/trogers1052/trading-go-commons v0.2.0
 	github.com/trogers1052/trading-testkit v0.3.0
 )
 

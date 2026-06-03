@@ -70,14 +70,19 @@ type Client struct {
 
 // NewClient creates a new Redis client
 func NewClient(addr, password string, db int) (*Client, error) {
-	// redisx.NewClient applies the platform's standard dial/read/write timeouts
-	// (5s/3s/3s). PoolSize is set explicitly to preserve this service's prior
-	// pool sizing.
+	// Pool/timeout settings are set explicitly to preserve this service's
+	// original pre-shared-lib Redis tuning. v0.2.0 redisx passes zero values
+	// through unchanged (no wrapper-imposed defaults), so every field the
+	// original code set must be set here.
 	client := redisx.NewClient(redisx.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       db,
-		PoolSize: 10,
+		Addr:         addr,
+		Password:     password,
+		DB:           db,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		PoolSize:     10,
+		MinIdleConns: 2,
 	})
 
 	// Test connection

@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/trogers1052/trading-go-commons/env"
 )
@@ -66,9 +65,9 @@ func Load() (*Config, error) {
 		DBSSLMode:  env.String("DB_SSL_MODE", "disable"),
 
 		// Kafka
-		// Use strings.Split (not env.StringSlice) to preserve exact split
-		// semantics: empty entries are retained rather than dropped.
-		KafkaBrokers:     strings.Split(env.String("KAFKA_BROKERS", "localhost:19092"), ","),
+		// StringSliceRaw preserves exact split semantics: a plain strings.Split
+		// with no trimming and no dropping of empty entries.
+		KafkaBrokers:     env.StringSliceRaw("KAFKA_BROKERS", []string{"localhost:19092"}, ","),
 		KafkaQuotesTopic: env.String("KAFKA_QUOTES_TOPIC", "stock.quotes.realtime"),
 		KafkaEnabled:     env.Bool("KAFKA_ENABLED", true), // Default to enabled
 
