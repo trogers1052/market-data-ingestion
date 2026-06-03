@@ -15,7 +15,7 @@ import (
 
 // PollingService handles market data ingestion via REST API polling
 type PollingService struct {
-	mdClient marketdata.Client
+	mdClient      marketdata.Client
 	repo          *database.Repository
 	scheduler     *MarketScheduler
 	kafkaProducer *kafka.Producer
@@ -45,7 +45,7 @@ func NewPollingService(
 	delayMinutes int,
 ) *PollingService {
 	return &PollingService{
-		mdClient: mdClient,
+		mdClient:      mdClient,
 		repo:          repo,
 		scheduler:     scheduler,
 		kafkaProducer: kafkaProducer,

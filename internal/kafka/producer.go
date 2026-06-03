@@ -12,6 +12,10 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
 
+// eventSource identifies the upstream market-data provider stamped on every
+// published quote event (QuoteEvent.Source and the "source" message header).
+const eventSource = "alpaca"
+
 // QuoteEvent represents a quote event published to Kafka
 type QuoteEvent struct {
 	EventType     string         `json:"event_type"`
@@ -80,7 +84,7 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfil
 
 	event := QuoteEvent{
 		EventType:     "QUOTE_UPDATE",
-		Source:        "polygon",
+		Source:        eventSource,
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		SchemaVersion: "1.0",
 		IsBackfill:    isBackfill,
@@ -118,7 +122,7 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfil
 			},
 			{
 				Key:   []byte("source"),
-				Value: []byte("polygon"),
+				Value: []byte(eventSource),
 			},
 		},
 	}
@@ -154,7 +158,7 @@ func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV, 
 	for _, bar := range bars {
 		event := QuoteEvent{
 			EventType:     "QUOTE_UPDATE",
-			Source:        "polygon",
+			Source:        eventSource,
 			Timestamp:     time.Now().UTC().Format(time.RFC3339),
 			SchemaVersion: "1.0",
 			IsBackfill:    isBackfill,
@@ -191,7 +195,7 @@ func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV, 
 				},
 				{
 					Key:   []byte("source"),
-					Value: []byte("polygon"),
+					Value: []byte(eventSource),
 				},
 			},
 		}

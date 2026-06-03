@@ -17,13 +17,13 @@ const (
 	WatchlistDetailsKey = "trading:watchlist:details"
 
 	// Data freshness keys
-	IngestionStatusKey       = "ingestion:status"          // Overall service status
-	SymbolFreshnessKeyPrefix = "ingestion:symbol:"         // Per-symbol freshness (suffix: {SYMBOL}:freshness)
-	SymbolFreshnessTTL       = 300                         // 5 minutes TTL for freshness data
+	IngestionStatusKey       = "ingestion:status"  // Overall service status
+	SymbolFreshnessKeyPrefix = "ingestion:symbol:" // Per-symbol freshness (suffix: {SYMBOL}:freshness)
+	SymbolFreshnessTTL       = 300                 // 5 minutes TTL for freshness data
 
 	// Backfill tracking keys (persistent, no TTL)
-	BackfillCompletedSetKey    = "backfill:completed"       // Set of symbols with completed backfill
-	BackfillCompletedKeyPrefix = "backfill:symbol:"         // Per-symbol completion info (suffix: {SYMBOL})
+	BackfillCompletedSetKey    = "backfill:completed" // Set of symbols with completed backfill
+	BackfillCompletedKeyPrefix = "backfill:symbol:"   // Per-symbol completion info (suffix: {SYMBOL})
 )
 
 // WatchlistStock represents a stock from the watchlist
@@ -48,18 +48,18 @@ type IngestionStatus struct {
 
 // SymbolFreshness represents data freshness for a specific symbol
 type SymbolFreshness struct {
-	Symbol           string `json:"symbol"`
-	Status           string `json:"status"`             // "current", "stale", "backfilling", "error", "no_data"
-	LastBarTime      string `json:"last_bar_time"`      // ISO timestamp of most recent bar
-	BarCount         int64  `json:"bar_count"`          // Total bars available
-	BackfillStatus   string `json:"backfill_status"`    // "completed", "in_progress", "pending", "failed"
-	BackfillStart    string `json:"backfill_start"`     // Earliest data available
-	BackfillEnd      string `json:"backfill_end"`       // Latest backfill data
-	CoveragePercent  float64 `json:"coverage_percent"`  // Data coverage percentage
-	GapsDetected     int    `json:"gaps_detected"`      // Number of gaps in data
-	LastUpdated      string `json:"last_updated"`       // When this status was updated
-	MinutesStale     int    `json:"minutes_stale"`      // Minutes since last bar (0 = current)
-	IsReady          bool   `json:"is_ready"`           // True if data is ready for analytics
+	Symbol          string  `json:"symbol"`
+	Status          string  `json:"status"`           // "current", "stale", "backfilling", "error", "no_data"
+	LastBarTime     string  `json:"last_bar_time"`    // ISO timestamp of most recent bar
+	BarCount        int64   `json:"bar_count"`        // Total bars available
+	BackfillStatus  string  `json:"backfill_status"`  // "completed", "in_progress", "pending", "failed"
+	BackfillStart   string  `json:"backfill_start"`   // Earliest data available
+	BackfillEnd     string  `json:"backfill_end"`     // Latest backfill data
+	CoveragePercent float64 `json:"coverage_percent"` // Data coverage percentage
+	GapsDetected    int     `json:"gaps_detected"`    // Number of gaps in data
+	LastUpdated     string  `json:"last_updated"`     // When this status was updated
+	MinutesStale    int     `json:"minutes_stale"`    // Minutes since last bar (0 = current)
+	IsReady         bool    `json:"is_ready"`         // True if data is ready for analytics
 }
 
 // Client wraps the Redis client for watchlist operations
@@ -291,11 +291,11 @@ func (c *Client) IsSymbolDataReady(ctx context.Context, symbol string) (bool, st
 // BackfillCompletion represents backfill completion info for a symbol
 type BackfillCompletion struct {
 	Symbol        string `json:"symbol"`
-	CompletedAt   string `json:"completed_at"`    // ISO timestamp
-	BackfillStart string `json:"backfill_start"`  // Earliest data date
-	BackfillEnd   string `json:"backfill_end"`    // Latest data date
-	TotalBars     int64  `json:"total_bars"`      // Number of bars backfilled
-	Months        int    `json:"months"`          // Months of data requested
+	CompletedAt   string `json:"completed_at"`   // ISO timestamp
+	BackfillStart string `json:"backfill_start"` // Earliest data date
+	BackfillEnd   string `json:"backfill_end"`   // Latest data date
+	TotalBars     int64  `json:"total_bars"`     // Number of bars backfilled
+	Months        int    `json:"months"`         // Months of data requested
 }
 
 // MarkBackfillComplete marks a symbol's backfill as complete in Redis

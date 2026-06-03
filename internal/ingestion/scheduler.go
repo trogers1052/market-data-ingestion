@@ -178,10 +178,10 @@ func (s *MarketScheduler) GetStatus() map[string]interface{} {
 	now := time.Now().In(s.location)
 
 	status := map[string]interface{}{
-		"current_time_et":  now.Format("2006-01-02 15:04:05 MST"),
-		"day_of_week":      now.Weekday().String(),
-		"is_market_hours":  s.IsMarketHours(),
-		"market_open_hour": s.marketOpenHour,
+		"current_time_et":   now.Format("2006-01-02 15:04:05 MST"),
+		"day_of_week":       now.Weekday().String(),
+		"is_market_hours":   s.IsMarketHours(),
+		"market_open_hour":  s.marketOpenHour,
 		"market_close_hour": s.marketCloseHour,
 	}
 

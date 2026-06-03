@@ -15,7 +15,7 @@ import (
 
 // BackfillService handles historical data backfill
 type BackfillService struct {
-	mdClient marketdata.Client
+	mdClient      marketdata.Client
 	repo          *database.Repository
 	months        int
 	kafkaProducer *kafka.Producer
@@ -29,7 +29,7 @@ func NewBackfillService(mdClient marketdata.Client, repo *database.Repository, m
 		delayDays = 0
 	}
 	return &BackfillService{
-		mdClient: mdClient,
+		mdClient:      mdClient,
 		repo:          repo,
 		months:        months,
 		kafkaProducer: kafkaProducer,

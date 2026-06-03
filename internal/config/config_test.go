@@ -150,8 +150,8 @@ func TestLoad_InvalidIntAndBoolFallBackToDefaults(t *testing.T) {
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	assert.Equal(t, 5432, cfg.DBPort)    // fell back to default
-	assert.True(t, cfg.KafkaEnabled)     // fell back to default true
+	assert.Equal(t, 5432, cfg.DBPort) // fell back to default
+	assert.True(t, cfg.KafkaEnabled)  // fell back to default true
 }
 
 func TestConnectionStringHelpers(t *testing.T) {

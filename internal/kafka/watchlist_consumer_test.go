@@ -142,14 +142,14 @@ type fakeSession struct {
 	marked int
 }
 
-func (f *fakeSession) Claims() map[string][]int32                          { return nil }
-func (f *fakeSession) MemberID() string                                    { return "m" }
-func (f *fakeSession) GenerationID() int32                                 { return 1 }
-func (f *fakeSession) MarkOffset(string, int32, int64, string)             {}
-func (f *fakeSession) Commit()                                             {}
-func (f *fakeSession) ResetOffset(string, int32, int64, string)           {}
-func (f *fakeSession) MarkMessage(msg *sarama.ConsumerMessage, _ string)   { f.marked++ }
-func (f *fakeSession) Context() context.Context                            { return f.ctx }
+func (f *fakeSession) Claims() map[string][]int32                        { return nil }
+func (f *fakeSession) MemberID() string                                  { return "m" }
+func (f *fakeSession) GenerationID() int32                               { return 1 }
+func (f *fakeSession) MarkOffset(string, int32, int64, string)           {}
+func (f *fakeSession) Commit()                                           {}
+func (f *fakeSession) ResetOffset(string, int32, int64, string)          {}
+func (f *fakeSession) MarkMessage(msg *sarama.ConsumerMessage, _ string) { f.marked++ }
+func (f *fakeSession) Context() context.Context                          { return f.ctx }
 
 type fakeClaim struct {
 	ch chan *sarama.ConsumerMessage

@@ -13,19 +13,19 @@ import (
 
 // WatchlistEvent represents a watchlist event from Kafka
 type WatchlistEvent struct {
-	EventType string              `json:"event_type"`
-	Source    string              `json:"source"`
-	Timestamp string              `json:"timestamp"`
-	Data      WatchlistEventData  `json:"data"`
+	EventType string             `json:"event_type"`
+	Source    string             `json:"source"`
+	Timestamp string             `json:"timestamp"`
+	Data      WatchlistEventData `json:"data"`
 }
 
 // WatchlistEventData holds the data for different watchlist event types
 type WatchlistEventData struct {
 	// For WATCHLIST_UPDATED events
-	AddedSymbols   []string        `json:"added_symbols,omitempty"`
-	RemovedSymbols []string        `json:"removed_symbols,omitempty"`
-	AllSymbols     []string        `json:"all_symbols,omitempty"`
-	TotalCount     int             `json:"total_count,omitempty"`
+	AddedSymbols   []string         `json:"added_symbols,omitempty"`
+	RemovedSymbols []string         `json:"removed_symbols,omitempty"`
+	AllSymbols     []string         `json:"all_symbols,omitempty"`
+	TotalCount     int              `json:"total_count,omitempty"`
 	Stocks         []WatchlistStock `json:"stocks,omitempty"`
 
 	// For WATCHLIST_SYMBOL_ADDED/REMOVED events
