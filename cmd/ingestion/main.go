@@ -5,17 +5,16 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/joho/godotenv"
+	"github.com/trogers1052/trading-go-commons/httpserver"
+
 	"github.com/trogers1052/market-data-ingestion/internal/alpaca"
 	"github.com/trogers1052/market-data-ingestion/internal/config"
 	"github.com/trogers1052/market-data-ingestion/internal/database"
@@ -67,7 +66,7 @@ func main() {
 	// Build a context that is cancelled on SIGINT/SIGTERM. This is the only
 	// place that installs OS signal handling; run() treats context
 	// cancellation as the shutdown trigger so it can be driven from tests too.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := httpserver.SignalContext()
 	defer stop()
 
 	if err := run(ctx, opts); err != nil {
@@ -95,20 +94,10 @@ func run(ctx context.Context, opts cliOptions) error {
 	if healthPort == "" {
 		healthPort = "8080"
 	}
-	healthMux := http.NewServeMux()
-	healthMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok")) //nolint:errcheck
-	})
-	healthServer := &http.Server{
-		Addr:         ":" + healthPort,
-		Handler:      healthMux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		IdleTimeout:  30 * time.Second,
-	}
+	healthServer := httpserver.NewHealthServer(":" + healthPort)
+	healthErrCh := healthServer.Start()
 	go func() {
-		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := <-healthErrCh; err != nil {
 			log.Printf("Health server error: %v", err)
 		}
 	}()
@@ -425,9 +414,7 @@ func run(ctx context.Context, opts cliOptions) error {
 	}
 
 	// Shut down health server gracefully
-	healthCtx, healthCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer healthCancel()
-	if err := healthServer.Shutdown(healthCtx); err != nil {
+	if err := healthServer.Shutdown(context.Background()); err != nil {
 		log.Printf("Health server shutdown error: %v", err)
 	}
 

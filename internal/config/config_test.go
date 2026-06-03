@@ -174,21 +174,3 @@ func TestConnectionStringHelpers(t *testing.T) {
 		cfg.DatabaseURL())
 	assert.Equal(t, "rh:6666", cfg.RedisAddr())
 }
-
-func TestGetEnvHelpers(t *testing.T) {
-	os.Unsetenv("SOME_TEST_KEY")
-	assert.Equal(t, "fallback", getEnv("SOME_TEST_KEY", "fallback"))
-	os.Setenv("SOME_TEST_KEY", "value")
-	defer os.Unsetenv("SOME_TEST_KEY")
-	assert.Equal(t, "value", getEnv("SOME_TEST_KEY", "fallback"))
-
-	os.Setenv("SOME_INT_KEY", "42")
-	defer os.Unsetenv("SOME_INT_KEY")
-	assert.Equal(t, 42, getEnvInt("SOME_INT_KEY", 7))
-	assert.Equal(t, 7, getEnvInt("MISSING_INT_KEY", 7))
-
-	os.Setenv("SOME_BOOL_KEY", "true")
-	defer os.Unsetenv("SOME_BOOL_KEY")
-	assert.True(t, getEnvBool("SOME_BOOL_KEY", false))
-	assert.False(t, getEnvBool("MISSING_BOOL_KEY", false))
-}

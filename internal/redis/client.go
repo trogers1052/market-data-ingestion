@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/trogers1052/trading-go-commons/redisx"
 )
 
 const (
@@ -69,15 +70,14 @@ type Client struct {
 
 // NewClient creates a new Redis client
 func NewClient(addr, password string, db int) (*Client, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:         addr,
-		Password:     password,
-		DB:           db,
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-		PoolSize:     10,
-		MinIdleConns: 2,
+	// redisx.NewClient applies the platform's standard dial/read/write timeouts
+	// (5s/3s/3s). PoolSize is set explicitly to preserve this service's prior
+	// pool sizing.
+	client := redisx.NewClient(redisx.Options{
+		Addr:     addr,
+		Password: password,
+		DB:       db,
+		PoolSize: 10,
 	})
 
 	// Test connection

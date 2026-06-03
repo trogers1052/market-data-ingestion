@@ -2,10 +2,9 @@ package main
 
 import (
 	"log"
-	"net/http"
 	"os"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/trogers1052/trading-go-commons/httpserver"
 
 	// Import the metrics package so that promauto registers all custom
 	// metrics with the default Prometheus registry before we serve /metrics.
@@ -17,10 +16,10 @@ func startMetricsServer() {
 	if port == "" {
 		port = "9090"
 	}
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
+	server := httpserver.NewMetricsServer(":" + port)
+	errCh := server.Start()
 	go func() {
-		if err := http.ListenAndServe(":"+port, metricsMux); err != nil {
+		if err := <-errCh; err != nil {
 			log.Printf("Metrics server error: %v", err)
 		}
 	}()

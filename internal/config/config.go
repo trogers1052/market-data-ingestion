@@ -2,9 +2,9 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"strconv"
 	"strings"
+
+	"github.com/trogers1052/trading-go-commons/env"
 )
 
 // Config holds all configuration for the market data ingestion service
@@ -54,44 +54,46 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		// Alpaca (free IEX feed, real-time)
-		AlpacaKeyID:     getEnv("ALPACA_API_KEY_ID", ""),
-		AlpacaSecretKey: getEnv("ALPACA_API_SECRET_KEY", ""),
+		AlpacaKeyID:     env.String("ALPACA_API_KEY_ID", ""),
+		AlpacaSecretKey: env.String("ALPACA_API_SECRET_KEY", ""),
 
 		// Database
-		DBHost:     getEnv("DB_HOST", "localhost"),
-		DBPort:     getEnvInt("DB_PORT", 5432),
-		DBUser:     getEnv("DB_USER", "trader"),
-		DBPassword: getEnv("DB_PASSWORD", ""),
-		DBName:     getEnv("DB_NAME", "market_data"),
-		DBSSLMode:  getEnv("DB_SSL_MODE", "disable"),
+		DBHost:     env.String("DB_HOST", "localhost"),
+		DBPort:     env.Int("DB_PORT", 5432),
+		DBUser:     env.String("DB_USER", "trader"),
+		DBPassword: env.String("DB_PASSWORD", ""),
+		DBName:     env.String("DB_NAME", "market_data"),
+		DBSSLMode:  env.String("DB_SSL_MODE", "disable"),
 
 		// Kafka
-		KafkaBrokers:     strings.Split(getEnv("KAFKA_BROKERS", "localhost:19092"), ","),
-		KafkaQuotesTopic: getEnv("KAFKA_QUOTES_TOPIC", "stock.quotes.realtime"),
-		KafkaEnabled:     getEnvBool("KAFKA_ENABLED", true), // Default to enabled
+		// Use strings.Split (not env.StringSlice) to preserve exact split
+		// semantics: empty entries are retained rather than dropped.
+		KafkaBrokers:     strings.Split(env.String("KAFKA_BROKERS", "localhost:19092"), ","),
+		KafkaQuotesTopic: env.String("KAFKA_QUOTES_TOPIC", "stock.quotes.realtime"),
+		KafkaEnabled:     env.Bool("KAFKA_ENABLED", true), // Default to enabled
 
 		// Kafka watchlist consumer
-		KafkaWatchlistTopic:  getEnv("KAFKA_WATCHLIST_TOPIC", "trading.watchlist"),
-		KafkaConsumerGroup:   getEnv("KAFKA_CONSUMER_GROUP", "market-data-ingestion"),
-		WatchlistSyncEnabled: getEnvBool("WATCHLIST_SYNC_ENABLED", true),
+		KafkaWatchlistTopic:  env.String("KAFKA_WATCHLIST_TOPIC", "trading.watchlist"),
+		KafkaConsumerGroup:   env.String("KAFKA_CONSUMER_GROUP", "market-data-ingestion"),
+		WatchlistSyncEnabled: env.Bool("WATCHLIST_SYNC_ENABLED", true),
 
 		// Redis
-		RedisHost:     getEnv("REDIS_HOST", "localhost"),
-		RedisPort:     getEnvInt("REDIS_PORT", 6379),
-		RedisPassword: getEnv("REDIS_PASSWORD", ""),
-		RedisDB:       getEnvInt("REDIS_DB", 0),
+		RedisHost:     env.String("REDIS_HOST", "localhost"),
+		RedisPort:     env.Int("REDIS_PORT", 6379),
+		RedisPassword: env.String("REDIS_PASSWORD", ""),
+		RedisDB:       env.Int("REDIS_DB", 0),
 
 		// Ingestion
-		PollIntervalSeconds: getEnvInt("POLL_INTERVAL_SECONDS", 60),
-		BackfillMonths:      getEnvInt("BACKFILL_MONTHS", 60),
-		BackfillDelayDays:   getEnvInt("BACKFILL_DELAY_DAYS", 0), // 0 = include today (Alpaca IEX is real-time)
-		MarketOpenHour:      getEnvInt("MARKET_OPEN_HOUR", 4),    // 4am ET (pre-market)
-		MarketCloseHour:     getEnvInt("MARKET_CLOSE_HOUR", 20),  // 8pm ET (after-hours)
-		EnablePreMarket:     getEnvBool("ENABLE_PRE_MARKET", true),
-		EnableAfterHours:    getEnvBool("ENABLE_AFTER_HOURS", true),
+		PollIntervalSeconds: env.Int("POLL_INTERVAL_SECONDS", 60),
+		BackfillMonths:      env.Int("BACKFILL_MONTHS", 60),
+		BackfillDelayDays:   env.Int("BACKFILL_DELAY_DAYS", 0), // 0 = include today (Alpaca IEX is real-time)
+		MarketOpenHour:      env.Int("MARKET_OPEN_HOUR", 4),    // 4am ET (pre-market)
+		MarketCloseHour:     env.Int("MARKET_CLOSE_HOUR", 20),  // 8pm ET (after-hours)
+		EnablePreMarket:     env.Bool("ENABLE_PRE_MARKET", true),
+		EnableAfterHours:    env.Bool("ENABLE_AFTER_HOURS", true),
 
 		// Polling settings
-		PollingDelayMinutes: getEnvInt("POLLING_DELAY_MINUTES", 0), // 0 = real-time (Alpaca IEX feed)
+		PollingDelayMinutes: env.Int("POLLING_DELAY_MINUTES", 0), // 0 = real-time (Alpaca IEX feed)
 	}
 
 	// Validate required fields
@@ -124,29 +126,4 @@ func (c *Config) DatabaseURL() string {
 // RedisAddr returns the Redis address in host:port format
 func (c *Config) RedisAddr() string {
 	return fmt.Sprintf("%s:%d", c.RedisHost, c.RedisPort)
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		if boolValue, err := strconv.ParseBool(value); err == nil {
-			return boolValue
-		}
-	}
-	return defaultValue
 }
