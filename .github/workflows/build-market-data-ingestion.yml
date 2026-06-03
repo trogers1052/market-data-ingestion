@@ -22,7 +22,7 @@ jobs:
       - name: Resolve trading-testkit from GitHub
         run: |
           sed -i '/replace.*trading-testkit/d' go.mod
-          go get github.com/trogers1052/trading-testkit@v0.2.0
+          go get github.com/trogers1052/trading-testkit@v0.3.0
           go mod tidy
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
@@ -39,7 +39,7 @@ jobs:
       - name: Resolve trading-testkit from GitHub
         run: |
           sed -i '/replace.*trading-testkit/d' go.mod
-          go get github.com/trogers1052/trading-testkit@v0.2.0
+          go get github.com/trogers1052/trading-testkit@v0.3.0
           go mod tidy
       - run: go test -v -race -short -cover ./...
 
@@ -54,7 +54,7 @@ jobs:
       - name: Resolve trading-testkit from GitHub
         run: |
           sed -i '/replace.*trading-testkit/d' go.mod
-          go get github.com/trogers1052/trading-testkit@v0.2.0
+          go get github.com/trogers1052/trading-testkit@v0.3.0
           go mod tidy
       - name: Run integration tests
         run: go test -v -race -run 'Integration' -timeout 300s ./...
@@ -75,7 +75,7 @@ jobs:
       - name: Resolve trading-testkit from GitHub
         run: |
           sed -i '/replace.*trading-testkit/d' go.mod
-          go get github.com/trogers1052/trading-testkit@v0.2.0
+          go get github.com/trogers1052/trading-testkit@v0.3.0
           go mod tidy
       - name: Build Linux ARM64 binary
         env:

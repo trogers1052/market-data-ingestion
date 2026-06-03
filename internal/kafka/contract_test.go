@@ -17,7 +17,7 @@ func TestContract_QuoteEvent(t *testing.T) {
 	require.NoError(t, err, "QuoteEvent must unmarshal from contract fixture")
 
 	assert.Equal(t, "QUOTE_UPDATE", event.EventType)
-	assert.Equal(t, "polygon", event.Source)
+	assert.Equal(t, "alpaca", event.Source)
 	assert.Equal(t, "1.0", event.SchemaVersion)
 	assert.Equal(t, "AAPL", event.Data.Symbol)
 	assert.Equal(t, "150.25", event.Data.Open)
