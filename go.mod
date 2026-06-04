@@ -12,7 +12,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/shopspring/decimal v1.3.1
 	github.com/stretchr/testify v1.11.1
-	github.com/trogers1052/trading-event-schemas v0.1.0
+	github.com/trogers1052/trading-event-schemas v0.1.1
 	github.com/trogers1052/trading-go-commons v0.4.0
 	github.com/trogers1052/trading-testkit v0.3.0
 )

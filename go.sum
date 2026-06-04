@@ -209,6 +209,8 @@ github.com/tklauser/numcpus v0.6.1 h1:ng9scYS7az0Bk4OZLvrNXNSAO2Pxr1XXRAPyjhIx+F
 github.com/tklauser/numcpus v0.6.1/go.mod h1:1XfjsgE2zo8GVw7POkMbHENHzVg3GzmoZ9fESEdAacY=
 github.com/trogers1052/trading-event-schemas v0.1.0 h1:zDK4nR5jM5Em0e4doL6YmbJyAsQ3qVejA2N5ncnRiX4=
 github.com/trogers1052/trading-event-schemas v0.1.0/go.mod h1:8YuE8qehUcNWB5cI9/jpZsKQdd+GzzQRK9b38TMhZTI=
+github.com/trogers1052/trading-event-schemas v0.1.1 h1:LHHKuwCZEKkSMXbPn8KxHLHO6AsRNrJpSf6S571NGfw=
+github.com/trogers1052/trading-event-schemas v0.1.1/go.mod h1:8YuE8qehUcNWB5cI9/jpZsKQdd+GzzQRK9b38TMhZTI=
 github.com/trogers1052/trading-go-commons v0.4.0 h1:iwtX8I1AdS0tuuSXxF3uFl0VxYM01tRJ7xdozNFp7X8=
 github.com/trogers1052/trading-go-commons v0.4.0/go.mod h1:y+o2n1MT/QDvjxGz8UnZxOG7mLrEYuVHYMwg+TOBLoI=
 github.com/twmb/franz-go v1.16.1 h1:rpWc7fB9jd7TgmCyfxzenBI+QbgS8ZfJOUQE+tzPtbE=
