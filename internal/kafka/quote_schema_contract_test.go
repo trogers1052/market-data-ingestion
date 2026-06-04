@@ -12,36 +12,9 @@ import (
 	"github.com/trogers1052/market-data-ingestion/internal/models"
 )
 
-// buildQuoteEvent mirrors the exact QuoteEvent construction performed by
-// Producer.PublishQuote / PublishQuotesBatch in producer.go, so the schema
-// contract test validates the real producer marshaling path (same field
-// formatting, same eventSource const, same "1.0"/"QUOTE_UPDATE" literals).
-func buildQuoteEvent(bar models.OHLCV, isBackfill bool) QuoteEvent {
-	event := QuoteEvent{
-		EventType:     "QUOTE_UPDATE",
-		Source:        eventSource,
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
-		SchemaVersion: "1.0",
-		IsBackfill:    isBackfill,
-		Data: QuoteEventData{
-			Symbol:     bar.Symbol,
-			Time:       bar.Time,
-			Open:       bar.Open.String(),
-			High:       bar.High.String(),
-			Low:        bar.Low.String(),
-			Close:      bar.Close.String(),
-			Volume:     bar.Volume,
-			TradeCount: bar.TradeCount,
-		},
-	}
-	if !bar.VWAP.IsZero() {
-		event.Data.VWAP = bar.VWAP.String()
-	}
-	return event
-}
-
 // TestQuoteEvent_SchemaContract asserts that a QuoteEvent built and marshaled
-// exactly as the producer does validates against the canonical quote_event
+// exactly as the producer does (via the production buildQuoteEvent in
+// producer.go) validates against the canonical quote_event
 // JSON Schema shipped by trading-event-schemas (the single source of truth
 // shared with Python consumers). This catches producer/contract drift.
 func TestQuoteEvent_SchemaContract(t *testing.T) {

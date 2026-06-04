@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
-	"github.com/IBM/sarama"
+	commonskafka "github.com/trogers1052/trading-go-commons/kafka"
 )
 
 // WatchlistEvent represents a watchlist event from Kafka
@@ -47,103 +46,71 @@ type SymbolHandler interface {
 	OnSymbolRemoved(ctx context.Context, symbol string) error
 }
 
-// WatchlistConsumer consumes watchlist events from Kafka
+// WatchlistConsumer consumes watchlist events from Kafka via the shared
+// trading-go-commons kafka.ConsumerGroup (kafka-go). It preserves the previous
+// sarama semantics: the configured topic/group, OffsetOldest for a fresh group,
+// and mark-and-continue on handler error (the offset is committed even when the
+// handler errors, so a poison message does not wedge the consumer).
 type WatchlistConsumer struct {
-	consumer sarama.ConsumerGroup
-	topic    string
-	handler  SymbolHandler
-	ready    chan bool
+	group   *commonskafka.ConsumerGroup
+	topic   string
+	handler SymbolHandler
 }
 
-// NewWatchlistConsumer creates a new watchlist consumer
+// NewWatchlistConsumer creates a new watchlist consumer backed by the shared
+// kafka.ConsumerGroup.
 func NewWatchlistConsumer(brokers []string, topic, groupID string, handler SymbolHandler) (*WatchlistConsumer, error) {
-	config := sarama.NewConfig()
-	config.Version = sarama.V2_8_0_0
-	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
-	config.Consumer.Offsets.Initial = sarama.OffsetOldest
-	config.Net.DialTimeout = 10 * time.Second
-	config.Net.ReadTimeout = 10 * time.Second
-	config.Net.WriteTimeout = 10 * time.Second
-	config.Consumer.Group.Session.Timeout = 30 * time.Second
-	config.Consumer.Group.Heartbeat.Interval = 10 * time.Second
+	c := &WatchlistConsumer{
+		topic:   topic,
+		handler: handler,
+	}
 
-	consumer, err := sarama.NewConsumerGroup(brokers, groupID, config)
+	group, err := commonskafka.NewConsumerGroup(
+		brokers,
+		groupID,
+		[]string{topic},
+		c.handle,
+		commonskafka.WithInitialOffset(commonskafka.OffsetOldest),
+		commonskafka.WithOnError(commonskafka.MarkAndContinue),
+		commonskafka.WithConsumerClientID("market-data-ingestion"),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer group: %w", err)
 	}
+	c.group = group
 
-	return &WatchlistConsumer{
-		consumer: consumer,
-		topic:    topic,
-		handler:  handler,
-		ready:    make(chan bool),
-	}, nil
+	return c, nil
 }
 
-// Start begins consuming messages
+// Start begins consuming messages. It blocks until ctx is cancelled, then
+// returns nil (graceful shutdown).
 func (c *WatchlistConsumer) Start(ctx context.Context) error {
 	log.Printf("Starting watchlist consumer for topic: %s", c.topic)
-
-	for {
-		// Consume handles reconnection automatically
-		if err := c.consumer.Consume(ctx, []string{c.topic}, c); err != nil {
-			if ctx.Err() != nil {
-				return nil // Context cancelled, clean shutdown
-			}
-			log.Printf("Consumer error: %v, will retry...", err)
-		}
-
-		// Check if context was cancelled
-		if ctx.Err() != nil {
-			return nil
-		}
-
-		c.ready = make(chan bool)
-	}
+	return c.group.Run(ctx)
 }
 
-// Close closes the consumer
+// Close closes the consumer. The shared ConsumerGroup ties its lifecycle to the
+// Run context, so this is a no-op for the runner; the field guard keeps it safe
+// when the consumer was never fully constructed.
 func (c *WatchlistConsumer) Close() error {
-	return c.consumer.Close()
-}
-
-// Setup is run at the beginning of a new session
-func (c *WatchlistConsumer) Setup(sarama.ConsumerGroupSession) error {
-	close(c.ready)
-	return nil
-}
-
-// Cleanup is run at the end of a session
-func (c *WatchlistConsumer) Cleanup(sarama.ConsumerGroupSession) error {
-	return nil
-}
-
-// ConsumeClaim processes messages from a claim
-func (c *WatchlistConsumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	for {
-		select {
-		case message, ok := <-claim.Messages():
-			if !ok {
-				return nil
-			}
-
-			if err := c.processMessage(session.Context(), message); err != nil {
-				log.Printf("Error processing message: %v", err)
-				// Continue processing other messages
-			}
-
-			session.MarkMessage(message, "")
-
-		case <-session.Context().Done():
-			return nil
-		}
+	if c.group == nil {
+		return nil
 	}
+	return c.group.Close()
 }
 
-// processMessage handles a single watchlist event message
-func (c *WatchlistConsumer) processMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
+// handle adapts a shared kafka.Message into the existing processMessage logic.
+// It is the Handler passed to the ConsumerGroup. Returning an error triggers the
+// group's MarkAndContinue policy (log + commit + continue), which mirrors the old
+// sarama ConsumeClaim behaviour of marking the message even when processing fails.
+func (c *WatchlistConsumer) handle(ctx context.Context, msg *commonskafka.Message) error {
+	return c.processMessage(ctx, msg.Value)
+}
+
+// processMessage handles a single watchlist event message body
+func (c *WatchlistConsumer) processMessage(ctx context.Context, value []byte) error {
 	var event WatchlistEvent
-	if err := json.Unmarshal(msg.Value, &event); err != nil {
+	if err := json.Unmarshal(value, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal event: %w", err)
 	}
 

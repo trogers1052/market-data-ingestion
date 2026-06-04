@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/IBM/sarama"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	commonskafka "github.com/trogers1052/trading-go-commons/kafka"
 )
 
 type fakeHandler struct {
@@ -36,17 +36,13 @@ func (h *fakeHandler) OnSymbolRemoved(ctx context.Context, symbol string) error 
 }
 
 func consumer(h SymbolHandler) *WatchlistConsumer {
-	return &WatchlistConsumer{topic: "wl", handler: h, ready: make(chan bool)}
-}
-
-func msg(value string) *sarama.ConsumerMessage {
-	return &sarama.ConsumerMessage{Value: []byte(value)}
+	return &WatchlistConsumer{topic: "wl", handler: h}
 }
 
 func TestProcessMessage_SymbolAdded(t *testing.T) {
 	h := &fakeHandler{}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{
+	err := c.processMessage(context.Background(), []byte(`{
 		"event_type":"WATCHLIST_SYMBOL_ADDED",
 		"data":{"symbol":"aapl","name":"Apple Inc"}
 	}`))
@@ -58,7 +54,7 @@ func TestProcessMessage_SymbolAdded(t *testing.T) {
 func TestProcessMessage_SymbolAdded_NoName(t *testing.T) {
 	h := &fakeHandler{}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{
+	err := c.processMessage(context.Background(), []byte(`{
 		"event_type":"WATCHLIST_SYMBOL_ADDED",
 		"data":{"symbol":"msft"}
 	}`))
@@ -70,7 +66,7 @@ func TestProcessMessage_SymbolAdded_NoName(t *testing.T) {
 func TestProcessMessage_SymbolAdded_HandlerError(t *testing.T) {
 	h := &fakeHandler{failAdd: true}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{
+	err := c.processMessage(context.Background(), []byte(`{
 		"event_type":"WATCHLIST_SYMBOL_ADDED","data":{"symbol":"aapl"}
 	}`))
 	require.Error(t, err)
@@ -80,7 +76,7 @@ func TestProcessMessage_SymbolAdded_HandlerError(t *testing.T) {
 func TestProcessMessage_SymbolRemoved(t *testing.T) {
 	h := &fakeHandler{}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{
+	err := c.processMessage(context.Background(), []byte(`{
 		"event_type":"WATCHLIST_SYMBOL_REMOVED","data":{"symbol":"tsla"}
 	}`))
 	require.NoError(t, err)
@@ -90,7 +86,7 @@ func TestProcessMessage_SymbolRemoved(t *testing.T) {
 func TestProcessMessage_SymbolRemoved_HandlerError(t *testing.T) {
 	h := &fakeHandler{failRem: true}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{
+	err := c.processMessage(context.Background(), []byte(`{
 		"event_type":"WATCHLIST_SYMBOL_REMOVED","data":{"symbol":"tsla"}
 	}`))
 	require.Error(t, err)
@@ -100,7 +96,7 @@ func TestProcessMessage_SymbolRemoved_HandlerError(t *testing.T) {
 func TestProcessMessage_WatchlistUpdated(t *testing.T) {
 	h := &fakeHandler{}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{
+	err := c.processMessage(context.Background(), []byte(`{
 		"event_type":"WATCHLIST_UPDATED",
 		"data":{
 			"added_symbols":["aapl","nvda"],
@@ -120,7 +116,7 @@ func TestProcessMessage_WatchlistUpdated_HandlerErrorsContinue(t *testing.T) {
 	// Errors inside WATCHLIST_UPDATED are logged but not returned.
 	h := &fakeHandler{failAdd: true, failRem: true}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{
+	err := c.processMessage(context.Background(), []byte(`{
 		"event_type":"WATCHLIST_UPDATED",
 		"data":{"added_symbols":["aapl"],"removed_symbols":["tsla"]}
 	}`))
@@ -130,88 +126,53 @@ func TestProcessMessage_WatchlistUpdated_HandlerErrorsContinue(t *testing.T) {
 func TestProcessMessage_UnknownEvent(t *testing.T) {
 	h := &fakeHandler{}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{"event_type":"SOMETHING_ELSE"}`))
+	err := c.processMessage(context.Background(), []byte(`{"event_type":"SOMETHING_ELSE"}`))
 	require.NoError(t, err)
 	assert.Empty(t, h.added)
-}
-
-// --- fakes for ConsumerGroupSession / ConsumerGroupClaim ---
-
-type fakeSession struct {
-	ctx    context.Context
-	marked int
-}
-
-func (f *fakeSession) Claims() map[string][]int32                        { return nil }
-func (f *fakeSession) MemberID() string                                  { return "m" }
-func (f *fakeSession) GenerationID() int32                               { return 1 }
-func (f *fakeSession) MarkOffset(string, int32, int64, string)           {}
-func (f *fakeSession) Commit()                                           {}
-func (f *fakeSession) ResetOffset(string, int32, int64, string)          {}
-func (f *fakeSession) MarkMessage(msg *sarama.ConsumerMessage, _ string) { f.marked++ }
-func (f *fakeSession) Context() context.Context                          { return f.ctx }
-
-type fakeClaim struct {
-	ch chan *sarama.ConsumerMessage
-}
-
-func (f *fakeClaim) Topic() string                            { return "wl" }
-func (f *fakeClaim) Partition() int32                         { return 0 }
-func (f *fakeClaim) InitialOffset() int64                     { return 0 }
-func (f *fakeClaim) HighWaterMarkOffset() int64               { return 0 }
-func (f *fakeClaim) Messages() <-chan *sarama.ConsumerMessage { return f.ch }
-
-func TestSetupClosesReady(t *testing.T) {
-	c := consumer(&fakeHandler{})
-	require.NoError(t, c.Setup(nil))
-	// ready channel should now be closed
-	select {
-	case <-c.ready:
-	default:
-		t.Fatal("ready channel was not closed by Setup")
-	}
-}
-
-func TestCleanup(t *testing.T) {
-	c := consumer(&fakeHandler{})
-	require.NoError(t, c.Cleanup(nil))
-}
-
-func TestConsumeClaim_ProcessesAndMarks(t *testing.T) {
-	h := &fakeHandler{}
-	c := consumer(h)
-	ch := make(chan *sarama.ConsumerMessage, 2)
-	ch <- msg(`{"event_type":"WATCHLIST_SYMBOL_ADDED","data":{"symbol":"aapl"}}`)
-	ch <- msg(`{bad json`) // processed (error logged) and still marked
-	close(ch)
-
-	sess := &fakeSession{ctx: context.Background()}
-	err := c.ConsumeClaim(sess, &fakeClaim{ch: ch})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"AAPL"}, h.added)
-	assert.Equal(t, 2, sess.marked)
-}
-
-func TestConsumeClaim_ContextDone(t *testing.T) {
-	c := consumer(&fakeHandler{})
-	ch := make(chan *sarama.ConsumerMessage) // never sends
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	sess := &fakeSession{ctx: ctx}
-	err := c.ConsumeClaim(sess, &fakeClaim{ch: ch})
-	require.NoError(t, err)
-}
-
-func TestNewWatchlistConsumer_ConnectError(t *testing.T) {
-	// No Kafka broker listening -> consumer group creation fails.
-	_, err := NewWatchlistConsumer([]string{"127.0.0.1:1"}, "wl", "grp", &fakeHandler{})
-	require.Error(t, err)
 }
 
 func TestProcessMessage_BadJSON(t *testing.T) {
 	h := &fakeHandler{}
 	c := consumer(h)
-	err := c.processMessage(context.Background(), msg(`{not json`))
+	err := c.processMessage(context.Background(), []byte(`{not json`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal")
+}
+
+// TestHandle_RoutesMessageValue confirms the ConsumerGroup Handler adapter routes
+// a shared kafka.Message's Value into processMessage and the existing dispatch.
+func TestHandle_RoutesMessageValue(t *testing.T) {
+	h := &fakeHandler{}
+	c := consumer(h)
+	msg := &commonskafka.Message{
+		Topic: "wl",
+		Value: []byte(`{"event_type":"WATCHLIST_SYMBOL_ADDED","data":{"symbol":"aapl","name":"Apple Inc"}}`),
+	}
+	require.NoError(t, c.handle(context.Background(), msg))
+	assert.Equal(t, []string{"AAPL"}, h.added)
+	assert.Equal(t, []string{"Apple Inc"}, h.names)
+}
+
+// TestHandle_BadJSONReturnsError confirms the handler returns an error on a bad
+// payload. Under the shared ConsumerGroup's MarkAndContinue policy this is logged
+// and committed (mirroring the old ConsumeClaim mark-on-error behaviour).
+func TestHandle_BadJSONReturnsError(t *testing.T) {
+	h := &fakeHandler{}
+	c := consumer(h)
+	msg := &commonskafka.Message{Topic: "wl", Value: []byte(`{bad json`)}
+	err := c.handle(context.Background(), msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unmarshal")
+}
+
+func TestNewWatchlistConsumer_NoBrokers(t *testing.T) {
+	// The shared consumer group rejects an empty broker list at construction.
+	_, err := NewWatchlistConsumer(nil, "wl", "grp", &fakeHandler{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create consumer group")
+}
+
+func TestWatchlistConsumer_Close_NilGroup(t *testing.T) {
+	c := &WatchlistConsumer{topic: "wl"}
+	require.NoError(t, c.Close())
 }

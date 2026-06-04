@@ -7,14 +7,25 @@ import (
 	"log"
 	"time"
 
-	"github.com/IBM/sarama"
 	"github.com/trogers1052/market-data-ingestion/internal/metrics"
 	"github.com/trogers1052/market-data-ingestion/internal/models"
+	commonskafka "github.com/trogers1052/trading-go-commons/kafka"
 )
 
 // eventSource identifies the upstream market-data provider stamped on every
 // published quote event (QuoteEvent.Source and the "source" message header).
 const eventSource = "alpaca"
+
+// eventType is the QUOTE_UPDATE constant stamped on every published quote event
+// (QuoteEvent.EventType and the "event_type" message header).
+const eventType = "QUOTE_UPDATE"
+
+// publishTimeout bounds the broker ack wait (mirrors the old sarama
+// Producer.Timeout / Net.{Dial,Read,Write}Timeout of 10s).
+const publishTimeout = 10 * time.Second
+
+// quoteEventClientID is the logical Kafka client identifier for the producer.
+const quoteEventClientID = "market-data-ingestion"
 
 // QuoteEvent represents a quote event published to Kafka
 type QuoteEvent struct {
@@ -39,31 +50,39 @@ type QuoteEventData struct {
 	TradeCount int       `json:"trade_count,omitempty"`
 }
 
+// quoteProducer is the minimal subset of *commonskafka.Producer the Producer
+// depends on. It lets tests inject a fake in place of a live broker writer while
+// the production path uses the real shared kafka-go producer.
+type quoteProducer interface {
+	Publish(ctx context.Context, topic string, key, value []byte, headers ...commonskafka.Header) error
+	PublishBatch(ctx context.Context, topic string, msgs []commonskafka.Message) error
+	Close() error
+}
+
 // Producer handles publishing quote events to Kafka
 type Producer struct {
-	producer sarama.SyncProducer
+	producer quoteProducer
 	topic    string
 	enabled  bool
 }
 
-// NewProducer creates a new Kafka producer for quote events
+// NewProducer creates a new Kafka producer for quote events backed by the shared
+// trading-go-commons kafka.Producer (kafka-go). It preserves the previous sarama
+// semantics: leader-only acks (WaitForLocal == RequireOne), Snappy compression,
+// and a 10s broker timeout.
 func NewProducer(brokers []string, topic string, enabled bool) (*Producer, error) {
 	if !enabled {
 		log.Println("Kafka producer disabled, quote events will not be published")
 		return &Producer{enabled: false}, nil
 	}
 
-	config := sarama.NewConfig()
-	config.Producer.Return.Successes = true
-	config.Producer.RequiredAcks = sarama.WaitForLocal // Wait for leader acknowledgment
-	config.Producer.Retry.Max = 3
-	config.Producer.Compression = sarama.CompressionSnappy
-	config.Net.DialTimeout = 10 * time.Second
-	config.Net.ReadTimeout = 10 * time.Second
-	config.Net.WriteTimeout = 10 * time.Second
-	config.Producer.Timeout = 10 * time.Second
-
-	producer, err := sarama.NewSyncProducer(brokers, config)
+	producer, err := commonskafka.NewProducer(
+		brokers,
+		commonskafka.WithRequiredAcks(commonskafka.RequireOne), // == sarama WaitForLocal
+		commonskafka.WithProducerCompression(commonskafka.CompressionSnappy),
+		commonskafka.WithProducerTimeout(publishTimeout),
+		commonskafka.WithClientID(quoteEventClientID),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
@@ -76,14 +95,30 @@ func NewProducer(brokers []string, topic string, enabled bool) (*Producer, error
 	}, nil
 }
 
-// PublishQuote publishes a single quote event to Kafka
-func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfill bool) error {
-	if !p.enabled {
-		return nil // Silently skip if disabled
+// quoteHeaders returns the two Kafka record headers stamped on every published
+// quote message: event_type=QUOTE_UPDATE and source=alpaca.
+func quoteHeaders() []commonskafka.Header {
+	return []commonskafka.Header{
+		{Key: "event_type", Value: []byte(eventType)},
+		{Key: "source", Value: []byte(eventSource)},
 	}
+}
 
+// quoteHeaderMap returns the same two record headers as a map, for the batch
+// path (commonskafka.Message carries headers as a map).
+func quoteHeaderMap() map[string][]byte {
+	return map[string][]byte{
+		"event_type": []byte(eventType),
+		"source":     []byte(eventSource),
+	}
+}
+
+// buildQuoteEvent constructs the QuoteEvent envelope (the JSON message body) for
+// a bar. It is the single source of the value-marshaling shape shared by
+// PublishQuote and PublishQuotesBatch.
+func buildQuoteEvent(bar models.OHLCV, isBackfill bool) QuoteEvent {
 	event := QuoteEvent{
-		EventType:     "QUOTE_UPDATE",
+		EventType:     eventType,
 		Source:        eventSource,
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		SchemaVersion: "1.0",
@@ -99,10 +134,19 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfil
 			TradeCount: bar.TradeCount,
 		},
 	}
-
 	if !bar.VWAP.IsZero() {
 		event.Data.VWAP = bar.VWAP.String()
 	}
+	return event
+}
+
+// PublishQuote publishes a single quote event to Kafka
+func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfill bool) error {
+	if !p.enabled {
+		return nil // Silently skip if disabled
+	}
+
+	event := buildQuoteEvent(bar, isBackfill)
 
 	// Marshal to JSON
 	value, err := json.Marshal(event)
@@ -110,26 +154,9 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfil
 		return fmt.Errorf("failed to marshal quote event: %w", err)
 	}
 
-	// Create message with symbol as key for partitioning
-	msg := &sarama.ProducerMessage{
-		Topic: p.topic,
-		Key:   sarama.StringEncoder(bar.Symbol),
-		Value: sarama.ByteEncoder(value),
-		Headers: []sarama.RecordHeader{
-			{
-				Key:   []byte("event_type"),
-				Value: []byte("QUOTE_UPDATE"),
-			},
-			{
-				Key:   []byte("source"),
-				Value: []byte(eventSource),
-			},
-		},
-	}
-
-	// Send message
-	partition, offset, err := p.producer.SendMessage(msg)
-	if err != nil {
+	// Publish with symbol as key for partitioning and the two record headers
+	// (event_type=QUOTE_UPDATE, source=alpaca) stamped on the message.
+	if err := p.producer.Publish(ctx, p.topic, []byte(bar.Symbol), value, quoteHeaders()...); err != nil {
 		metrics.KafkaPublishErrors.Inc()
 		return fmt.Errorf("failed to send message to Kafka: %w", err)
 	}
@@ -138,13 +165,14 @@ func (p *Producer) PublishQuote(ctx context.Context, bar models.OHLCV, isBackfil
 
 	// Per-quote publish log intentionally omitted to avoid flooding during market hours.
 	// Batch publishes are logged in PublishQuotesBatch.
-	_ = partition
-	_ = offset
 
 	return nil
 }
 
-// PublishQuotesBatch publishes multiple quote events in a batch
+// PublishQuotesBatch publishes multiple quote events in a single batched
+// WriteMessages round-trip (all-or-nothing, mirroring the old sarama
+// SendMessages call). Each message carries the symbol key, the QuoteEvent JSON
+// body, and the two record headers (event_type=QUOTE_UPDATE, source=alpaca).
 func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV, isBackfill bool) error {
 	if !p.enabled {
 		return nil // Silently skip if disabled
@@ -154,29 +182,9 @@ func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV, 
 		return nil
 	}
 
-	messages := make([]*sarama.ProducerMessage, 0, len(bars))
+	messages := make([]commonskafka.Message, 0, len(bars))
 	for _, bar := range bars {
-		event := QuoteEvent{
-			EventType:     "QUOTE_UPDATE",
-			Source:        eventSource,
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-			SchemaVersion: "1.0",
-			IsBackfill:    isBackfill,
-			Data: QuoteEventData{
-				Symbol:     bar.Symbol,
-				Time:       bar.Time,
-				Open:       bar.Open.String(),
-				High:       bar.High.String(),
-				Low:        bar.Low.String(),
-				Close:      bar.Close.String(),
-				Volume:     bar.Volume,
-				TradeCount: bar.TradeCount,
-			},
-		}
-
-		if !bar.VWAP.IsZero() {
-			event.Data.VWAP = bar.VWAP.String()
-		}
+		event := buildQuoteEvent(bar, isBackfill)
 
 		value, err := json.Marshal(event)
 		if err != nil {
@@ -184,31 +192,20 @@ func (p *Producer) PublishQuotesBatch(ctx context.Context, bars []models.OHLCV, 
 			continue
 		}
 
-		msg := &sarama.ProducerMessage{
-			Topic: p.topic,
-			Key:   sarama.StringEncoder(bar.Symbol),
-			Value: sarama.ByteEncoder(value),
-			Headers: []sarama.RecordHeader{
-				{
-					Key:   []byte("event_type"),
-					Value: []byte("QUOTE_UPDATE"),
-				},
-				{
-					Key:   []byte("source"),
-					Value: []byte(eventSource),
-				},
-			},
-		}
-		messages = append(messages, msg)
+		messages = append(messages, commonskafka.Message{
+			Topic:   p.topic,
+			Key:     []byte(bar.Symbol),
+			Value:   value,
+			Headers: quoteHeaderMap(),
+		})
 	}
 
 	if len(messages) == 0 {
 		return nil
 	}
 
-	// Send batch
-	err := p.producer.SendMessages(messages)
-	if err != nil {
+	// Send batch in one all-or-nothing call.
+	if err := p.producer.PublishBatch(ctx, p.topic, messages); err != nil {
 		metrics.KafkaPublishErrors.Add(float64(len(messages)))
 		return fmt.Errorf("failed to send batch to Kafka: %w", err)
 	}
