@@ -267,17 +267,32 @@ func run(ctx context.Context, opts cliOptions) error {
 		}
 	}
 
-	// Create Kafka producer for quote events
+	// Create Kafka producer for quote events. A transient broker outage at
+	// startup must never PERMANENTLY disable publishing: on 2026-06-16 a single
+	// failed init made the poller run TimescaleDB-only for weeks, silently
+	// starving the entire downstream pipeline. Retry with backoff, then fail-fast
+	// so the container restart policy keeps trying until the broker is reachable —
+	// a visible crash-loop beats an invisible dead quote stream.
 	var kafkaProducer *kafka.Producer
 	if cfg.KafkaEnabled {
-		producer, err := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaQuotesTopic, true)
-		if err != nil {
-			log.Printf("Warning: Failed to create Kafka producer: %v", err)
-			log.Println("Continuing without Kafka publishing...")
-		} else {
-			kafkaProducer = producer
-			defer kafkaProducer.Close()
-			log.Printf("Kafka producer ready for topic: %s", cfg.KafkaQuotesTopic)
+		const maxAttempts = 12
+		const retryDelay = 5 * time.Second
+		for attempt := 1; ; attempt++ {
+			producer, err := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaQuotesTopic, true)
+			if err == nil {
+				kafkaProducer = producer
+				defer kafkaProducer.Close()
+				log.Printf("Kafka producer ready for topic: %s", cfg.KafkaQuotesTopic)
+				break
+			}
+			if attempt >= maxAttempts {
+				return fmt.Errorf(
+					"kafka producer init failed after %d attempts: %w — refusing to run "+
+						"without publishing (restart will retry)", maxAttempts, err)
+			}
+			log.Printf("Kafka producer init attempt %d/%d failed: %v — retrying in %s",
+				attempt, maxAttempts, err, retryDelay)
+			time.Sleep(retryDelay)
 		}
 	}
 
